@@ -98,6 +98,7 @@ export default function FlightFareGrid() {
   const [refreshingKey, setRefreshingKey] = useState(null);
   const [optionsCache, setOptionsCache] = useState({}); // fullCacheKey -> options array
   const [optionsLoadingKey, setOptionsLoadingKey] = useState(null);
+  const [showRawData, setShowRawData] = useState(false);
 
   const stops = mode === "roundtrip" ? [singleStop] : multiStops;
   const stopsKey = origin + "|" + destination + "|" + mode + "|" + stops.join(",");
@@ -262,7 +263,29 @@ export default function FlightFareGrid() {
 
   const [cheapDOff, cheapROff] = cheapestKey.split("_").map(Number);
   const originalTotal = matrix["0_0"].total;
-  const savings = originalTotal - matrix[cheapestKey].total;
+  const cheapestTotal = matrix[cheapestKey].total;
+  const savings = originalTotal - cheapestTotal;
+
+  function datesForKey(key) {
+    const [d, r] = key.split("_").map(Number);
+    return { dOff: d, rOff: r, departDate: formatDate(addDays(DEPART_CENTER, d)), returnDate: formatDate(addDays(RETURN_CENTER, r)) };
+  }
+  const fullMatrixWithDates = Object.fromEntries(
+    Object.entries(matrix).map(([key, entry]) => [key, { ...datesForKey(key), ...entry }])
+  );
+  const rawData = {
+    dateLegend: "Keys are '{dOff}_{rOff}' offsets in days from the two center dates below — NOT literal dates.",
+    centerDates: { departCenter: formatDate(DEPART_CENTER), returnCenter: formatDate(RETURN_CENTER) },
+    route: { origin, destination, mode, stops },
+    selectedCell: { ...datesForKey(cellKey), key: cellKey },
+    selectedCellFetchedData: matrixEntry,
+    cheapestCell: { ...datesForKey(cheapestKey), key: cheapestKey, total: cheapestTotal },
+    gridMinMaxTotal: { min, max },
+    optionsCheckedForSelectedCell: revealedOptions ?? null,
+    activeOption,
+    itinerary,
+    fullMatrix: fullMatrixWithDates,
+  };
 
   // The permutation search (all city orders) is expensive against a real
   // API, so it only runs when explicitly requested via the button below —
@@ -939,6 +962,60 @@ export default function FlightFareGrid() {
             </div>
           ))}
         </div>
+      </div>
+
+      <div style={{ maxWidth: 980, margin: "22px auto 0" }}>
+        <button
+          onClick={() => setShowRawData((v) => !v)}
+          style={{
+            background: "transparent",
+            border: "1px solid #3E4650",
+            color: "#C7CED6",
+            borderRadius: 6,
+            padding: "6px 12px",
+            fontFamily: "'IBM Plex Sans', sans-serif",
+            fontWeight: 600,
+            fontSize: 12,
+            cursor: "pointer",
+          }}
+        >
+          {showRawData ? "Hide raw data ▲" : "View raw data ▼"}
+        </button>
+        {showRawData && (
+          <div
+            style={{
+              marginTop: 10,
+              background: "#14181D",
+              border: "1px solid #22282F",
+              borderRadius: 10,
+              padding: "14px 16px",
+            }}
+          >
+            <div style={{ fontSize: 12, color: "#7C8691", marginBottom: 10, lineHeight: 1.5 }}>
+              Exactly what's currently backing this screen — the selected cell's fetched
+              price/legs, the full 11×11 grid, any checked options, and the rendered
+              itinerary. Cross-check these numbers against what's on screen above.
+            </div>
+            <pre
+              className="mono"
+              style={{
+                margin: 0,
+                fontSize: 11.5,
+                lineHeight: 1.5,
+                color: "#C7CED6",
+                background: "#0E1216",
+                border: "1px solid #22282F",
+                borderRadius: 8,
+                padding: "12px 14px",
+                maxHeight: 480,
+                overflow: "auto",
+                whiteSpace: "pre",
+              }}
+            >
+              {JSON.stringify(rawData, null, 2)}
+            </pre>
+          </div>
+        )}
       </div>
 
       <div style={{ maxWidth: 980, margin: "20px auto 0", fontSize: 12, color: "#4B5560", lineHeight: 1.6 }}>
