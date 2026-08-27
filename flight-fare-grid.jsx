@@ -16,7 +16,7 @@ import { OFFSETS, CITIES, ORIGINS, DEPART_CENTER, RETURN_CENTER, buildItineraryF
 
 async function apiGetGrid(origin, destination, stops) {
   const params = new URLSearchParams({ origin, destination, stops: stops.join(",") });
-  const res = await fetch(`/api/fare-grid?${params}`);
+  const res = await fetch(`/api/fare-grid?${params}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`GET /api/fare-grid -> ${res.status}`);
   return (await res.json()).grid;
 }
@@ -29,7 +29,7 @@ async function apiGetCheckedOptions(origin, destination, stops, dOff, rOff) {
     departOffset: String(dOff),
     returnOffset: String(rOff),
   });
-  const res = await fetch(`/api/fare-options?${params}`);
+  const res = await fetch(`/api/fare-options?${params}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`GET /api/fare-options -> ${res.status}`);
   return (await res.json()).options;
 }
@@ -55,7 +55,7 @@ async function apiRefreshCell(origin, destination, stops, dOff, rOff) {
 }
 
 async function apiGetUsage() {
-  const res = await fetch(`/api/usage`);
+  const res = await fetch(`/api/usage`, { cache: "no-store" });
   if (!res.ok) throw new Error(`GET /api/usage -> ${res.status}`);
   return res.json();
 }

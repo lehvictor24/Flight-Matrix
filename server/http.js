@@ -31,6 +31,7 @@ function isRateLimited(ip) {
 function send(res, status, body) {
   res.writeHead(status, {
     "Content-Type": "application/json",
+    "Cache-Control": "no-store", // every route here reflects live/mutable state — never let a browser cache it
     "Access-Control-Allow-Origin": "*", // dev convenience only — see plan §11 for real auth before this is ever public
   });
   res.end(JSON.stringify(body));
