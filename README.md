@@ -72,6 +72,13 @@ server/cache.js           — getFare(): fresh/stale/missing + TTL (§3)
 also go through `cache.js`/`storage.js` — no code path bypasses the cache or budget
 check, matching the plan's core guarantee.
 
+The depart/return date range (the "±5 days" grid's two center dates) is configurable
+via date pickers in the frontend, threaded through as `departCenter`/`returnCenter`
+("YYYY-MM-DD") on every route and defaulting to `calculations.js`'s `DEPART_CENTER`/
+`RETURN_CENTER` when omitted (so `demo.js` and `server/scheduler.js` don't need to
+care). The two dates must be at least `MIN_TRIP_NIGHTS` (11) apart, or the ±5-day
+grid could compute a negative trip length at its extreme corner.
+
 ### Routes (`server/http.js`, plan §8)
 
 | Route | Cost | Notes |

@@ -35,13 +35,25 @@ const ORIGINS = {
   sea: { code: "SEA", city: "Seattle" },
 };
 
+// Defaults only — the actual date range is configurable per request (frontend
+// date pickers -> API query/body -> here) so these are just what's used when a
+// caller doesn't pass its own centers (demo.js, server/scheduler.js).
 const DEPART_CENTER = new Date(2026, 11, 17); // Dec 17, 2026
 const RETURN_CENTER = new Date(2027, 0, 3); // Jan 3, 2027
+
+// OFFSETS spans -5..+5, so (rOff - dOff) ranges from -10 to +10 — the two
+// centers must be at least this many nights apart or an extreme grid corner
+// would compute a negative trip length.
+const MIN_TRIP_NIGHTS = 11;
 
 function addDays(date, n) {
   const d = new Date(date);
   d.setDate(d.getDate() + n);
   return d;
+}
+
+function nightsBetween(departCenter, returnCenter) {
+  return Math.round((new Date(returnCenter) - new Date(departCenter)) / (24 * 60 * 60 * 1000));
 }
 
 function distributeNights(total, n) {
@@ -157,15 +169,19 @@ async function generateOptions(stops, origin, destination, dOff, rOff, fetcher =
  * Pure calculation, no fetch needed — builds the leg-by-leg itinerary
  * (dates, airlines, per-leg price) for a chosen ordering, using the leg
  * prices already returned by computePriceForOrder.
+ *
+ * @param {Date} [departCenter] - defaults to the module default; the frontend's
+ *   configured depart-date picker value flows in here via the server.
+ * @param {Date} [returnCenter] - same, for the return-date picker.
  */
-function buildItineraryForOrder(dOff, rOff, stopsOrder, origin, destination, legs) {
-  const totalNights = 17 + (rOff - dOff);
+function buildItineraryForOrder(dOff, rOff, stopsOrder, origin, destination, legs, departCenter = DEPART_CENTER, returnCenter = RETURN_CENTER) {
+  const totalNights = nightsBetween(departCenter, returnCenter) + (rOff - dOff);
   const nightsPerStop = distributeNights(totalNights, stopsOrder.length);
   const originInfo = ORIGINS[origin];
   const destInfo = ORIGINS[destination];
 
   const itineraryLegs = [];
-  let cursor = addDays(DEPART_CENTER, dOff);
+  let cursor = addDays(departCenter, dOff);
   let fromCode = originInfo.code;
   let fromCity = originInfo.city;
 
@@ -207,9 +223,11 @@ export {
   ORIGINS,
   DEPART_CENTER,
   RETURN_CENTER,
+  MIN_TRIP_NIGHTS,
   buildMatrix,
   generateOptions,
   computePriceForOrder,
   buildItineraryForOrder,
   permute,
+  nightsBetween,
 };

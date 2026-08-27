@@ -1,5 +1,14 @@
 import { useState, useMemo, useEffect, Fragment } from "react";
-import { OFFSETS, CITIES, ORIGINS, DEPART_CENTER, RETURN_CENTER, buildItineraryForOrder } from "./calculations.js";
+import {
+  OFFSETS,
+  CITIES,
+  ORIGINS,
+  DEPART_CENTER,
+  RETURN_CENTER,
+  MIN_TRIP_NIGHTS,
+  buildItineraryForOrder,
+  nightsBetween,
+} from "./calculations.js";
 
 // ---------------------------------------------------------------------------
 // Pricing comes from the local API server (server/http.js) via fetch() — see
@@ -14,41 +23,43 @@ import { OFFSETS, CITIES, ORIGINS, DEPART_CENTER, RETURN_CENTER, buildItineraryF
 // both) — Vite proxies /api/* to it, see vite.config.js.
 // ---------------------------------------------------------------------------
 
-async function apiGetGrid(origin, destination, stops) {
-  const params = new URLSearchParams({ origin, destination, stops: stops.join(",") });
+async function apiGetGrid(origin, destination, stops, departCenter, returnCenter) {
+  const params = new URLSearchParams({ origin, destination, stops: stops.join(","), departCenter, returnCenter });
   const res = await fetch(`/api/fare-grid?${params}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`GET /api/fare-grid -> ${res.status}`);
   return (await res.json()).grid;
 }
 
-async function apiGetCheckedOptions(origin, destination, stops, dOff, rOff) {
+async function apiGetCheckedOptions(origin, destination, stops, dOff, rOff, departCenter, returnCenter) {
   const params = new URLSearchParams({
     origin,
     destination,
     stops: stops.join(","),
     departOffset: String(dOff),
     returnOffset: String(rOff),
+    departCenter,
+    returnCenter,
   });
   const res = await fetch(`/api/fare-options?${params}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`GET /api/fare-options -> ${res.status}`);
   return (await res.json()).options;
 }
 
-async function apiCheckOptions(origin, destination, stops, dOff, rOff) {
+async function apiCheckOptions(origin, destination, stops, dOff, rOff, departCenter, returnCenter) {
   const res = await fetch(`/api/fare-options/check`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ origin, destination, stops, dOff, rOff }),
+    body: JSON.stringify({ origin, destination, stops, dOff, rOff, departCenter, returnCenter }),
   });
   if (!res.ok) throw new Error(`POST /api/fare-options/check -> ${res.status}`);
   return (await res.json()).options;
 }
 
-async function apiRefreshCell(origin, destination, stops, dOff, rOff) {
+async function apiRefreshCell(origin, destination, stops, dOff, rOff, departCenter, returnCenter) {
   const res = await fetch(`/api/fare-cell/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ origin, destination, stops, dOff, rOff }),
+    body: JSON.stringify({ origin, destination, stops, dOff, rOff, departCenter, returnCenter }),
   });
   if (!res.ok) throw new Error(`POST /api/fare-cell/refresh -> ${res.status}`);
   return res.json(); // { total, legs, order }
@@ -77,6 +88,19 @@ function addDays(date, n) {
   const d = new Date(date);
   d.setDate(d.getDate() + n);
   return d;
+}
+
+// Local-midnight ISO date string, matching how server/pricingService.js parses
+// it back (parseLocalDate) — avoids a UTC/local off-by-one-day mismatch.
+function toIsoDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+function fromIsoDate(isoStr) {
+  const [y, m, d] = isoStr.split("-").map(Number);
+  return new Date(y, m - 1, d);
 }
 
 function formatDate(date) {
@@ -128,6 +152,8 @@ function freshnessColor(hoursAgo) {
 export default function FlightFareGrid() {
   const [origin, setOrigin] = useState(DEFAULT_ORIGIN);
   const [destination, setDestination] = useState(DEFAULT_ORIGIN);
+  const [departCenterStr, setDepartCenterStr] = useState(toIsoDate(DEPART_CENTER)); // configurable date range
+  const [returnCenterStr, setReturnCenterStr] = useState(toIsoDate(RETURN_CENTER));
   const [mode, setMode] = useState("multicity"); // "roundtrip" | "multicity"
   const [singleStop, setSingleStop] = useState(DEFAULT_SINGLE_STOP);
   const [multiStops, setMultiStops] = useState(DEFAULT_MULTI_STOPS);
@@ -143,7 +169,16 @@ export default function FlightFareGrid() {
   const [usage, setUsage] = useState(null); // GET /api/usage — estimated cost/usage monitor
 
   const stops = mode === "roundtrip" ? [singleStop] : multiStops;
-  const stopsKey = origin + "|" + destination + "|" + mode + "|" + stops.join(",");
+  const stopsKey =
+    origin + "|" + destination + "|" + mode + "|" + stops.join(",") + "|" + departCenterStr + "|" + returnCenterStr;
+
+  const departCenter = fromIsoDate(departCenterStr);
+  const returnCenter = fromIsoDate(returnCenterStr);
+  const configuredNights = nightsBetween(departCenter, returnCenter);
+  const dateRangeError =
+    configuredNights < MIN_TRIP_NIGHTS
+      ? `Return date must be at least ${MIN_TRIP_NIGHTS} days after depart date (currently ${configuredNights}).`
+      : null;
 
   function resetSelection() {
     setSelected({ dOff: 0, rOff: 0 });
@@ -192,7 +227,9 @@ export default function FlightFareGrid() {
     setMatrixError(null);
     setRefreshedAt({});
 
-    apiGetGrid(origin, destination, stops)
+    if (dateRangeError) return; // don't fetch against an invalid date range
+
+    apiGetGrid(origin, destination, stops, departCenterStr, returnCenterStr)
       .then((grid) => {
         if (!cancelled) setMatrix(grid);
       })
@@ -208,7 +245,7 @@ export default function FlightFareGrid() {
     };
   }, [stopsKey]);
 
-  const isMatrixLoading = Object.keys(matrix).length === 0 && !matrixError;
+  const isMatrixLoading = Object.keys(matrix).length === 0 && !matrixError && !dateRangeError;
 
   // Whichever cell is selected, ask the server what's already been checked for
   // it (GET /api/fare-options — cache-only, always free, per plan §8). Runs
@@ -216,7 +253,7 @@ export default function FlightFareGrid() {
   // server persists trip_price_cache to disk.
   useEffect(() => {
     let cancelled = false;
-    apiGetCheckedOptions(origin, destination, stops, selected.dOff, selected.rOff)
+    apiGetCheckedOptions(origin, destination, stops, selected.dOff, selected.rOff, departCenterStr, returnCenterStr)
       .then((options) => {
         if (!cancelled) setCheckedOptions(options);
       })
@@ -232,7 +269,7 @@ export default function FlightFareGrid() {
     const key = `${dOff}_${rOff}`;
     setRefreshingKey(key);
     try {
-      const result = await apiRefreshCell(origin, destination, stops, dOff, rOff);
+      const result = await apiRefreshCell(origin, destination, stops, dOff, rOff, departCenterStr, returnCenterStr);
       setMatrix((prev) => ({
         ...prev,
         [key]: { total: result.total, legs: result.legs, order: result.order },
@@ -300,20 +337,27 @@ export default function FlightFareGrid() {
             activeOption.order,
             origin,
             destination,
-            activeOption.legs
+            activeOption.legs,
+            departCenter,
+            returnCenter
           )
         : { legs: [], nightsPerStop: [], totalNights: 0 },
     [selected, stopsKey, selectedOptionIndex, revealedOptions, activeOption]
   );
 
-  if (isMatrixLoading || matrixError) {
+  if (isMatrixLoading || matrixError || dateRangeError) {
     return (
       <LoadingScreen
         origin={origin}
         destination={destination}
         stops={stops}
         mode={mode}
-        error={matrixError}
+        error={matrixError || dateRangeError}
+        isDateRangeError={Boolean(dateRangeError)}
+        departCenterStr={departCenterStr}
+        returnCenterStr={returnCenterStr}
+        onDepartCenterChange={setDepartCenterStr}
+        onReturnCenterChange={setReturnCenterStr}
       />
     );
   }
@@ -325,14 +369,14 @@ export default function FlightFareGrid() {
 
   function datesForKey(key) {
     const [d, r] = key.split("_").map(Number);
-    return { dOff: d, rOff: r, departDate: formatDate(addDays(DEPART_CENTER, d)), returnDate: formatDate(addDays(RETURN_CENTER, r)) };
+    return { dOff: d, rOff: r, departDate: formatDate(addDays(departCenter, d)), returnDate: formatDate(addDays(returnCenter, r)) };
   }
   const fullMatrixWithDates = Object.fromEntries(
     Object.entries(matrix).map(([key, entry]) => [key, { ...datesForKey(key), ...entry }])
   );
   const rawData = {
     dateLegend: "Keys are '{dOff}_{rOff}' offsets in days from the two center dates below — NOT literal dates.",
-    centerDates: { departCenter: formatDate(DEPART_CENTER), returnCenter: formatDate(RETURN_CENTER) },
+    centerDates: { departCenter: formatDate(departCenter), returnCenter: formatDate(returnCenter) },
     route: { origin, destination, mode, stops },
     selectedCell: { ...datesForKey(cellKey), key: cellKey },
     selectedCellFetchedData: matrixEntry,
@@ -353,7 +397,7 @@ export default function FlightFareGrid() {
     if (checkedOptions.length > 0 || isCheckingOptions) return;
     setIsCheckingOptions(true);
     try {
-      const options = await apiCheckOptions(origin, destination, stops, selected.dOff, selected.rOff);
+      const options = await apiCheckOptions(origin, destination, stops, selected.dOff, selected.rOff, departCenterStr, returnCenterStr);
       setCheckedOptions(options);
     } finally {
       setIsCheckingOptions(false);
@@ -549,6 +593,64 @@ export default function FlightFareGrid() {
         />
       </div>
 
+      {/* Date range */}
+      <div
+        style={{
+          maxWidth: 980,
+          margin: "0 auto 20px",
+          display: "flex",
+          alignItems: "flex-end",
+          flexWrap: "wrap",
+          gap: 10,
+        }}
+      >
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "#7C8691" }}>
+          Depart date (center of grid)
+          <input
+            type="date"
+            value={departCenterStr}
+            onChange={(e) => {
+              setDepartCenterStr(e.target.value);
+              resetSelection();
+            }}
+            style={{
+              background: "#1B2128",
+              border: "1px solid #E8A33D",
+              color: "#F3E3C6",
+              borderRadius: 8,
+              padding: "9px 12px",
+              fontFamily: "'IBM Plex Sans', sans-serif",
+              fontWeight: 600,
+              fontSize: 13,
+            }}
+          />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "#7C8691" }}>
+          Return date (center of grid)
+          <input
+            type="date"
+            value={returnCenterStr}
+            onChange={(e) => {
+              setReturnCenterStr(e.target.value);
+              resetSelection();
+            }}
+            style={{
+              background: "#1B2128",
+              border: "1px solid #E8A33D",
+              color: "#F3E3C6",
+              borderRadius: 8,
+              padding: "9px 12px",
+              fontFamily: "'IBM Plex Sans', sans-serif",
+              fontWeight: 600,
+              fontSize: 13,
+            }}
+          />
+        </label>
+        <span style={{ fontSize: 11, color: "#4B5560", paddingBottom: 10 }}>
+          ±5 days in each direction fills the grid — the two dates must be at least {MIN_TRIP_NIGHTS} days apart.
+        </span>
+      </div>
+
       {/* Summary strip */}
       <div
         style={{
@@ -560,15 +662,15 @@ export default function FlightFareGrid() {
         }}
       >
         <SummaryCard
-          label="Your dates (Dec 17 → Jan 3)"
+          label={`Your dates (${formatDate(departCenter)} → ${formatDate(returnCenter)})`}
           value={`$${originalTotal.toLocaleString()}`}
           sub="all 4 legs combined"
         />
         <SummaryCard
           label="Cheapest in this grid"
           value={`$${matrix[cheapestKey].total.toLocaleString()}`}
-          sub={`${formatDate(addDays(DEPART_CENTER, cheapDOff))} → ${formatDate(
-            addDays(RETURN_CENTER, cheapROff)
+          sub={`${formatDate(addDays(departCenter, cheapDOff))} → ${formatDate(
+            addDays(returnCenter, cheapROff)
           )}`}
           accent="#4ADE80"
         />
@@ -612,7 +714,7 @@ export default function FlightFareGrid() {
               DEPART ↓ / RETURN →
             </div>
             {OFFSETS.map((rOff) => {
-              const d = addDays(RETURN_CENTER, rOff);
+              const d = addDays(returnCenter, rOff);
               return (
                 <div key={`col-${rOff}`} style={{ textAlign: "center", paddingBottom: 6 }}>
                   <div
@@ -631,7 +733,7 @@ export default function FlightFareGrid() {
             })}
 
             {OFFSETS.map((dOff) => {
-              const d = addDays(DEPART_CENTER, dOff);
+              const d = addDays(departCenter, dOff);
               return (
                 <Fragment key={`row-${dOff}`}>
                   <div
@@ -686,7 +788,7 @@ export default function FlightFareGrid() {
                           minHeight: 44,
                         }}
                         aria-label={`Depart ${formatDate(d)}, return ${formatDate(
-                          addDays(RETURN_CENTER, rOff)
+                          addDays(returnCenter, rOff)
                         )}: $${entry.total} — ${freshnessLabel(dOff, rOff)}`}
                       >
                         <span
@@ -1091,7 +1193,18 @@ export default function FlightFareGrid() {
   );
 }
 
-function LoadingScreen({ origin, destination, stops, mode, error }) {
+function LoadingScreen({
+  origin,
+  destination,
+  stops,
+  mode,
+  error,
+  isDateRangeError,
+  departCenterStr,
+  returnCenterStr,
+  onDepartCenterChange,
+  onReturnCenterChange,
+}) {
   return (
     <div
       style={{
@@ -1118,14 +1231,58 @@ function LoadingScreen({ origin, destination, stops, mode, error }) {
           className="mono pulse-dot"
           style={{ fontSize: 12, letterSpacing: "0.14em", color: error ? "#F87171" : "#E8A33D", textTransform: "uppercase", marginBottom: 14 }}
         >
-          {error ? "Request failed" : "Fetching fares from local API server"}
+          {isDateRangeError ? "Invalid date range" : error ? "Request failed" : "Fetching fares from local API server"}
         </div>
         <div style={{ fontSize: 15, color: "#C7CED6", marginBottom: 18 }}>
           {mode === "roundtrip"
             ? `${ORIGINS[origin].city} round trip`
             : `${ORIGINS[origin].city} → ${stops.map((s) => CITIES[s].city).join(" → ")} → ${ORIGINS[destination].city}`}
         </div>
-        {error ? (
+        {isDateRangeError ? (
+          <div style={{ textAlign: "left" }}>
+            <div className="mono" style={{ fontSize: 12, color: "#F87171", marginBottom: 14 }}>
+              {error}
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "#7C8691" }}>
+                Depart date
+                <input
+                  type="date"
+                  value={departCenterStr}
+                  onChange={(e) => onDepartCenterChange(e.target.value)}
+                  style={{
+                    background: "#1B2128",
+                    border: "1px solid #E8A33D",
+                    color: "#F3E3C6",
+                    borderRadius: 8,
+                    padding: "8px 10px",
+                    fontFamily: "'IBM Plex Sans', sans-serif",
+                    fontWeight: 600,
+                    fontSize: 13,
+                  }}
+                />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "#7C8691" }}>
+                Return date
+                <input
+                  type="date"
+                  value={returnCenterStr}
+                  onChange={(e) => onReturnCenterChange(e.target.value)}
+                  style={{
+                    background: "#1B2128",
+                    border: "1px solid #E8A33D",
+                    color: "#F3E3C6",
+                    borderRadius: 8,
+                    padding: "8px 10px",
+                    fontFamily: "'IBM Plex Sans', sans-serif",
+                    fontWeight: 600,
+                    fontSize: 13,
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+        ) : error ? (
           <div className="mono" style={{ fontSize: 12, color: "#F87171" }}>
             {error} — is the API server running? (<code>npm run server</code>)
           </div>

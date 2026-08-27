@@ -76,7 +76,9 @@ const server = createServer(async (req, res) => {
       const origin = url.searchParams.get("origin");
       const destination = url.searchParams.get("destination");
       const stops = parseStops(url);
-      const grid = await getGrid({ origin, destination, stops });
+      const departCenter = url.searchParams.get("departCenter") || undefined;
+      const returnCenter = url.searchParams.get("returnCenter") || undefined;
+      const grid = await getGrid({ origin, destination, stops, departCenter, returnCenter });
       return send(res, 200, { grid });
     }
 
@@ -86,7 +88,9 @@ const server = createServer(async (req, res) => {
       const stops = parseStops(url);
       const dOff = Number(url.searchParams.get("departOffset"));
       const rOff = Number(url.searchParams.get("returnOffset"));
-      const options = getCheckedOptions({ origin, destination, stops, dOff, rOff });
+      const departCenter = url.searchParams.get("departCenter") || undefined;
+      const returnCenter = url.searchParams.get("returnCenter") || undefined;
+      const options = getCheckedOptions({ origin, destination, stops, dOff, rOff, departCenter, returnCenter });
       return send(res, 200, { options });
     }
 
