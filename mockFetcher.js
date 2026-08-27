@@ -7,7 +7,10 @@
 // Set USE_LIVE_API=true in env to make fetchFare() throw instead of returning mock
 // data, so it's obvious if something accidentally tries to go live during local dev.
 
-const USE_LIVE_API = process.env.USE_LIVE_API === "true";
+// Works in Node (reads env) and the browser (no process global, so it's always
+// mock mode client-side — the real Fetcher lives server-side once §8's routes exist).
+const USE_LIVE_API =
+  typeof process !== "undefined" && process.env && process.env.USE_LIVE_API === "true";
 
 // Tracks calls made this process — stands in for the api_usage table (§2/§6).
 // A real Fetcher increments a Postgres counter here instead.
@@ -58,7 +61,7 @@ function simulatedNetworkDelay() {
  * @param {number} params.rOff - return date offset from center date
  * @returns {Promise<{total:number, legs:Array, raw_response:object}>}
  */
-async function fetchFare({ origin, destination, stopsOrder, dOff, rOff }) {
+export async function fetchFare({ origin, destination, stopsOrder, dOff, rOff }) {
   if (USE_LIVE_API) {
     throw new Error(
       "USE_LIVE_API=true but mockFetcher.fetchFare() was called. " +
@@ -122,4 +125,4 @@ async function fetchFare({ origin, destination, stopsOrder, dOff, rOff }) {
   };
 }
 
-module.exports = { fetchFare, getCallsMade, resetCallCounter, USE_LIVE_API };
+export { getCallsMade, resetCallCounter, USE_LIVE_API };

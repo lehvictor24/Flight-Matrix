@@ -1,9 +1,22 @@
 import { useState, useMemo, useEffect, Fragment } from "react";
+import {
+  OFFSETS,
+  CITIES,
+  ORIGINS,
+  DEPART_CENTER,
+  RETURN_CENTER,
+  buildMatrix,
+  generateOptions,
+  computePriceForOrder,
+  buildItineraryForOrder,
+} from "./calculations.js";
 
 // ---------------------------------------------------------------------------
-// Fake data generation — deterministic "pseudo-random" so the grid is stable
-// across renders but still looks organic (mimics real fare curves: pricier
-// near the exact holiday dates, cheaper as you drift away from them).
+// Pricing itself comes from calculations.js (backed by mockFetcher.js's
+// simulated SerpApi calls, per the technical plan's two-cost-tier model).
+// This file is presentation only — deterministic display helpers (dates,
+// colors, simulated cache-freshness age) live here since they don't cost an
+// API call and the Fetcher doesn't need to know about them.
 // ---------------------------------------------------------------------------
 
 function seededNoise(x, y, seed) {
@@ -11,52 +24,13 @@ function seededNoise(x, y, seed) {
   return v - Math.floor(v);
 }
 
-// Selectable origin airports. Each carries a rough cost factor relative to
-// RDU (West coast airports sit closer to Asia and price lower; East coast
-// hubs sit further and price about the same or slightly less than RDU).
-const ORIGINS = {
-  rdu: { code: "RDU", city: "Raleigh-Durham", factor: 1.0 },
-  jfk: { code: "JFK", city: "New York", factor: 0.92 },
-  ord: { code: "ORD", city: "Chicago", factor: 0.95 },
-  atl: { code: "ATL", city: "Atlanta", factor: 0.97 },
-  dfw: { code: "DFW", city: "Dallas", factor: 0.93 },
-  lax: { code: "LAX", city: "Los Angeles", factor: 0.78 },
-  sfo: { code: "SFO", city: "San Francisco", factor: 0.75 },
-  sea: { code: "SEA", city: "Seattle", factor: 0.8 },
-};
 const DEFAULT_ORIGIN = "rdu";
-
-// Selectable destination pool. Add more here to expand the dropdown options.
-const CITIES = {
-  nrt: { code: "NRT", city: "Tokyo", oneWayBase: 480 },
-  tpe: { code: "TPE", city: "Taipei", oneWayBase: 550 },
-  sin: { code: "SIN", city: "Singapore", oneWayBase: 760 },
-  hkg: { code: "HKG", city: "Hong Kong", oneWayBase: 620 },
-  icn: { code: "ICN", city: "Seoul", oneWayBase: 510 },
-  bkk: { code: "BKK", city: "Bangkok", oneWayBase: 700 },
-  mnl: { code: "MNL", city: "Manila", oneWayBase: 640 },
-  kul: { code: "KUL", city: "Kuala Lumpur", oneWayBase: 780 },
-  sgn: { code: "SGN", city: "Ho Chi Minh City", oneWayBase: 690 },
-};
 
 // Default stop order — matches what's been discussed so far.
 const DEFAULT_MULTI_STOPS = ["nrt", "tpe", "sin"];
 const DEFAULT_SINGLE_STOP = "nrt";
 const MAX_MULTI_STOPS = 4;
 const MIN_MULTI_STOPS = 2;
-
-const OFFSETS = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
-
-const DEPART_CENTER = new Date(2026, 11, 17); // Dec 17, 2026 — leave RDU
-const RETURN_CENTER = new Date(2027, 0, 3); // Jan 3, 2027 — arrive back RDU
-
-// Evenly distribute total nights across N stops (remainder goes to the
-// earliest stops so totals always sum exactly to totalNights).
-function distributeNights(total, n) {
-  const base = Math.floor(total / n);
-  const remainder = total - base * n;
-  return Array.from({ length: n }, (_, i) => base + (i < remainder ? 1 : 0));
-}
 
 function addDays(date, n) {
   const d = new Date(date);
@@ -72,177 +46,10 @@ function formatDay(date) {
   return date.toLocaleDateString("en-US", { weekday: "short" });
 }
 
-// All orderings of a set of stops — this is what lets the in-between
-// cities be visited in any order rather than the order they were picked in.
-function permute(arr) {
-  if (arr.length <= 1) return [arr];
-  const result = [];
-  arr.forEach((item, i) => {
-    const rest = [...arr.slice(0, i), ...arr.slice(i + 1)];
-    permute(rest).forEach((p) => result.push([item, ...p]));
-  });
-  return result;
-}
-
 function factorial(n) {
   let f = 1;
   for (let i = 2; i <= n; i++) f *= i;
   return f;
-}
-
-// Order-sensitive seed so two different orderings of the same cities price
-// differently (mimicking real fare variance by routing), while staying
-// deterministic for a given order + date pair.
-function orderSeed(stopsOrder) {
-  return stopsOrder.reduce(
-    (acc, s, i) => acc + (s.charCodeAt(0) + s.charCodeAt(1) * 2) * (i + 3) * 5,
-    7
-  );
-}
-
-const AIRLINES = [
-  "ANA",
-  "EVA Air",
-  "Singapore Airlines",
-  "United",
-  "Delta",
-  "Korean Air",
-  "Cathay Pacific",
-  "China Airlines",
-  "JAL",
-];
-
-function airlineFor(seedNum, i) {
-  const idx = Math.floor(seededNoise(seedNum, i, 3) * AIRLINES.length);
-  return AIRLINES[Math.abs(idx) % AIRLINES.length];
-}
-
-// Price a single specific ordering of stops for a given depart/return offset
-// pair. This is the core pricing function — everything else calls into it.
-function computePriceForOrder(stopsOrder, origin, destination, dOff, rOff) {
-  const originFactor = ORIGINS[origin].factor;
-  const destFactor = ORIGINS[destination].factor;
-  const baseCities = stopsOrder.map((s) => CITIES[s].oneWayBase);
-
-  const legBase = [baseCities[0] * originFactor];
-  for (let i = 0; i < stopsOrder.length - 1; i++) {
-    legBase.push((baseCities[i] + baseCities[i + 1]) * 0.22);
-  }
-  legBase.push(baseCities[baseCities.length - 1] * destFactor * 1.05);
-
-  const baseTotal = legBase.reduce((a, b) => a + b, 0);
-  const peakPull = (5 - Math.abs(dOff)) * 26 + (5 - Math.abs(rOff)) * 26;
-  const tripLength = 17 + (rOff - dOff);
-  const lengthPenalty = Math.abs(tripLength - 17) * 10;
-  const seed = orderSeed(stopsOrder) + origin.length * 13 + destination.length * 17;
-  const noise = seededNoise(dOff + 6, rOff + 6, seed) * 160;
-  const total = Math.round(baseTotal + peakPull + lengthPenalty * 0.4 + noise);
-
-  return { order: stopsOrder, total, legBase, baseTotal };
-}
-
-// All available "flight options" for a given depart/return offset pair,
-// sorted cheapest first. For multi-city trips this means every ordering of
-// the in-between cities; for a simple round trip it means a few plausible
-// carrier/routing alternatives on the same city pair.
-function generateOptions(stops, origin, destination, dOff, rOff) {
-  if (stops.length > 1) {
-    const priced = permute(stops).map((order) =>
-      computePriceForOrder(order, origin, destination, dOff, rOff)
-    );
-    priced.sort((a, b) => a.total - b.total);
-    return priced.map((p, i) => ({
-      ...p,
-      label: p.order.map((s) => CITIES[s].city).join(" → "),
-      isCheapest: i === 0,
-      seedBase: orderSeed(p.order),
-    }));
-  }
-
-  const base = computePriceForOrder(stops, origin, destination, dOff, rOff);
-  const variants = [
-    { label: "Best value", mult: 1.0 },
-    { label: "Fewer connections", mult: 1.09 },
-    { label: "Budget carrier mix", mult: 0.93 },
-  ];
-  const priced = variants.map((v) => ({
-    order: stops,
-    total: Math.round(base.total * v.mult),
-    legBase: base.legBase.map((b) => b * v.mult),
-    baseTotal: base.baseTotal * v.mult,
-    label: v.label,
-    seedBase: orderSeed(stops) + v.label.length,
-  }));
-  priced.sort((a, b) => a.total - b.total);
-  return priced.map((p, i) => ({ ...p, isCheapest: i === 0 }));
-}
-
-// Build the full itinerary — one overnight long-haul leg out, same-day
-// regional hops between stops, one overnight long-haul leg back — for any
-// number of stops (1 = simple round trip, 2+ = multi-city loop) in a
-// specific chosen order.
-function buildItineraryForOrder(dOff, rOff, stopsOrder, origin, destination, seedBase) {
-  const totalNights = 17 + (rOff - dOff);
-  const nightsPerStop = distributeNights(totalNights, stopsOrder.length);
-  const originInfo = ORIGINS[origin];
-  const destInfo = ORIGINS[destination];
-
-  const legs = [];
-  let cursor = addDays(DEPART_CENTER, dOff);
-  let fromCode = originInfo.code;
-  let fromCity = originInfo.city;
-
-  stopsOrder.forEach((s, i) => {
-    const arrive = i === 0 ? addDays(cursor, 1) : cursor; // overnight only on the first leg
-    legs.push({
-      from: fromCode,
-      to: CITIES[s].code,
-      fromCity,
-      toCity: CITIES[s].city,
-      depart: cursor,
-      arrive,
-      airline: airlineFor(seedBase + i * 11, i),
-    });
-    cursor = addDays(arrive, nightsPerStop[i]);
-    fromCode = CITIES[s].code;
-    fromCity = CITIES[s].city;
-  });
-
-  // final leg: last stop -> final destination (overnight long-haul)
-  const arriveFinal = addDays(cursor, 1);
-  legs.push({
-    from: fromCode,
-    to: destInfo.code,
-    fromCity,
-    toCity: destInfo.city,
-    depart: cursor,
-    arrive: arriveFinal,
-    airline: airlineFor(seedBase + stopsOrder.length * 11, stopsOrder.length),
-  });
-
-  return { legs, nightsPerStop, totalNights };
-}
-
-// Grid price for each depart/return cell uses the single order the stops are
-// currently arranged in — cheap (one price lookup per cell), matching a real
-// API's per-search cost. Cheaper orderings may exist, but finding them means
-// searching every permutation, which is deferred to an explicit, cached,
-// on-demand action (see generateOptions + the "Show other flight options"
-// button) rather than run automatically for every grid cell.
-function buildMatrix(stops, origin, destination) {
-  const grid = {};
-  OFFSETS.forEach((dOff) => {
-    OFFSETS.forEach((rOff) => {
-      const priced = computePriceForOrder(stops, origin, destination, dOff, rOff);
-      grid[`${dOff}_${rOff}`] = {
-        total: priced.total,
-        legBase: priced.legBase,
-        baseTotal: priced.baseTotal,
-        order: stops,
-      };
-    });
-  });
-  return grid;
 }
 
 function colorForPrice(price, min, max) {
@@ -285,17 +92,15 @@ export default function FlightFareGrid() {
   const [multiStops, setMultiStops] = useState(DEFAULT_MULTI_STOPS);
   const [selected, setSelected] = useState({ dOff: 0, rOff: 0 });
   const [selectedOptionIndex, setSelectedOptionIndex] = useState(0);
-  const [overrides, setOverrides] = useState({}); // cacheKey -> { jitterMult, refreshedAt }
+  const [matrix, setMatrix] = useState({}); // dOff_rOff -> { total, legBase, baseTotal, legs, order }
+  const [matrixProgress, setMatrixProgress] = useState({ done: 0, total: 1 });
+  const [refreshedAt, setRefreshedAt] = useState({}); // cacheKey -> timestamp, for manually-refreshed cells
   const [refreshingKey, setRefreshingKey] = useState(null);
   const [optionsCache, setOptionsCache] = useState({}); // fullCacheKey -> options array
   const [optionsLoadingKey, setOptionsLoadingKey] = useState(null);
 
   const stops = mode === "roundtrip" ? [singleStop] : multiStops;
   const stopsKey = origin + "|" + destination + "|" + mode + "|" + stops.join(",");
-  const matrix = useMemo(
-    () => buildMatrix(stops, origin, destination),
-    [stopsKey]
-  );
 
   function resetSelection() {
     setSelected({ dOff: 0, rOff: 0 });
@@ -329,36 +134,59 @@ export default function FlightFareGrid() {
     resetSelection();
   }
 
-  // Clear simulated "manual refresh" overrides and cached permutation
-  // searches whenever the route config changes — both only make sense
-  // against the matrix/options they were computed for. The exact-date cell
-  // (offset 0,0) is seeded as already cached, standing in for "someone
-  // already checked this popular date pair recently" — everything else
-  // starts uncached until explicitly checked.
+  // Rebuild the grid (tier 1 — one Fetcher call per cell) whenever the route
+  // config changes, and clear anything that only makes sense against the
+  // previous matrix/options. The exact-date cell (offset 0,0) is pre-fetched
+  // as "already cached," standing in for someone already having checked this
+  // popular date pair recently — everything else starts uncached until
+  // explicitly checked via "Check other orders."
   useEffect(() => {
-    setOverrides({});
-    const seededKey = `${stopsKey}__0_0`;
-    const seeded = generateOptions(stops, origin, destination, 0, 0);
-    setOptionsCache({ [seededKey]: seeded });
+    let cancelled = false;
+    setMatrix({});
+    setMatrixProgress({ done: 0, total: OFFSETS.length * OFFSETS.length });
+    setRefreshedAt({});
+    setOptionsCache({});
+
+    buildMatrix(stops, origin, destination, (done, total) => {
+      if (!cancelled) setMatrixProgress({ done, total });
+    }).then((grid) => {
+      if (cancelled) return;
+      setMatrix(grid);
+      const seededKey = `${stopsKey}__0_0`;
+      generateOptions(stops, origin, destination, 0, 0).then((seeded) => {
+        if (!cancelled) setOptionsCache({ [seededKey]: seeded });
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [stopsKey]);
 
-  function refreshCell(dOff, rOff) {
+  const isMatrixLoading = Object.keys(matrix).length === 0;
+
+  async function refreshCell(dOff, rOff) {
     const key = `${dOff}_${rOff}`;
     setRefreshingKey(key);
-    setTimeout(() => {
-      const jitterPct = (seededNoise(dOff + 6, rOff + 6, Date.now() % 5000) - 0.5) * 0.06;
-      setOverrides((prev) => ({
-        ...prev,
-        [key]: { jitterMult: 1 + jitterPct, refreshedAt: Date.now() },
-      }));
-      setRefreshingKey(null);
-    }, 550);
+    const priced = await computePriceForOrder(stops, origin, destination, dOff, rOff);
+    setMatrix((prev) => ({
+      ...prev,
+      [key]: {
+        total: priced.total,
+        legBase: priced.legBase,
+        baseTotal: priced.baseTotal,
+        legs: priced.legs,
+        order: stops,
+      },
+    }));
+    setRefreshedAt((prev) => ({ ...prev, [key]: Date.now() }));
+    setRefreshingKey(null);
   }
 
   function freshnessLabel(dOff, rOff) {
     const key = `${dOff}_${rOff}`;
-    if (overrides[key]) {
-      const mins = Math.max(0, Math.floor((Date.now() - overrides[key].refreshedAt) / 60000));
+    if (refreshedAt[key]) {
+      const mins = Math.max(0, Math.floor((Date.now() - refreshedAt[key]) / 60000));
       return mins < 1 ? "Updated just now" : `Updated ${mins}m ago`;
     }
     return `Updated ${simulatedHoursAgo(dOff, rOff, stopsKey)}h ago`;
@@ -366,24 +194,15 @@ export default function FlightFareGrid() {
 
   function freshnessHours(dOff, rOff) {
     const key = `${dOff}_${rOff}`;
-    if (overrides[key]) return 0;
+    if (refreshedAt[key]) return 0;
     return simulatedHoursAgo(dOff, rOff, stopsKey);
   }
-
-  const displayMatrix = useMemo(() => {
-    const out = {};
-    Object.entries(matrix).forEach(([k, v]) => {
-      const jitter = overrides[k]?.jitterMult ?? 1;
-      out[k] = { ...v, total: Math.round(v.total * jitter) };
-    });
-    return out;
-  }, [matrix, overrides]);
 
   const { min, max, cheapestKey } = useMemo(() => {
     let mn = Infinity,
       mx = -Infinity,
       ck = null;
-    Object.entries(displayMatrix).forEach(([k, v]) => {
+    Object.entries(matrix).forEach(([k, v]) => {
       if (v.total < mn) {
         mn = v.total;
         ck = k;
@@ -391,73 +210,77 @@ export default function FlightFareGrid() {
       if (v.total > mx) mx = v.total;
     });
     return { min: mn, max: mx, cheapestKey: ck };
-  }, [displayMatrix]);
-
-  const [cheapDOff, cheapROff] = cheapestKey.split("_").map(Number);
-  const originalTotal = displayMatrix["0_0"].total;
-  const savings = originalTotal - displayMatrix[cheapestKey].total;
+  }, [matrix]);
 
   const cellKey = `${selected.dOff}_${selected.rOff}`;
   const fullCacheKey = `${stopsKey}__${cellKey}`;
-  const cellJitter = overrides[cellKey]?.jitterMult ?? 1;
+  const revealedOptions = optionsCache[fullCacheKey];
+  const isLoadingOptions = optionsLoadingKey === fullCacheKey;
+
+  const matrixEntry = matrix[cellKey];
+  const defaultOption = matrixEntry && {
+    order: stops,
+    total: matrixEntry.total,
+    legBase: matrixEntry.legBase,
+    baseTotal: matrixEntry.baseTotal,
+    legs: matrixEntry.legs,
+    label: stops.map((s) => CITIES[s].city).join(" → "),
+    isCheapest: !revealedOptions,
+  };
+
+  const displayedOptions = revealedOptions ? revealedOptions.slice(0, 5) : [defaultOption].filter(Boolean);
+  const activeOption = displayedOptions[selectedOptionIndex] || displayedOptions[0];
+
+  // Hooks must run unconditionally every render, so this stays above the
+  // loading early-return below and tolerates matrix not being ready yet.
+  const itinerary = useMemo(
+    () =>
+      activeOption
+        ? buildItineraryForOrder(
+            selected.dOff,
+            selected.rOff,
+            activeOption.order,
+            origin,
+            destination,
+            activeOption.legs
+          )
+        : { legs: [], nightsPerStop: [], totalNights: 0 },
+    [selected, stopsKey, selectedOptionIndex, revealedOptions, activeOption]
+  );
+
+  if (isMatrixLoading) {
+    return (
+      <LoadingScreen
+        origin={origin}
+        destination={destination}
+        stops={stops}
+        mode={mode}
+        progress={matrixProgress}
+      />
+    );
+  }
+
+  const [cheapDOff, cheapROff] = cheapestKey.split("_").map(Number);
+  const originalTotal = matrix["0_0"].total;
+  const savings = originalTotal - matrix[cheapestKey].total;
 
   // The permutation search (all city orders) is expensive against a real
   // API, so it only runs when explicitly requested via the button below —
   // and once run for a given route+cell, the result is cached so revisiting
   // that cell (or switching away and back) never re-triggers it.
-  function requestOptions() {
+  async function requestOptions() {
     if (optionsCache[fullCacheKey] || optionsLoadingKey) return;
     setOptionsLoadingKey(fullCacheKey);
-    setTimeout(() => {
-      const computed = generateOptions(
-        stops,
-        origin,
-        destination,
-        selected.dOff,
-        selected.rOff
-      ).map((o) => ({
-        ...o,
-        total: Math.round(o.total * cellJitter),
-        legBase: o.legBase.map((b) => b * cellJitter),
-      }));
-      setOptionsCache((prev) => ({ ...prev, [fullCacheKey]: computed }));
-      setOptionsLoadingKey(null);
-    }, 600);
+    const computed = await generateOptions(
+      stops,
+      origin,
+      destination,
+      selected.dOff,
+      selected.rOff
+    );
+    setOptionsCache((prev) => ({ ...prev, [fullCacheKey]: computed }));
+    setOptionsLoadingKey(null);
   }
-
-  const revealedOptions = optionsCache[fullCacheKey];
-  const isLoadingOptions = optionsLoadingKey === fullCacheKey;
-
-  const matrixEntry = matrix[cellKey];
-  const displayEntry = displayMatrix[cellKey];
-  const defaultOption = {
-    order: stops,
-    total: displayEntry.total,
-    legBase: matrixEntry.legBase,
-    baseTotal: matrixEntry.baseTotal,
-    label: stops.map((s) => CITIES[s].city).join(" → "),
-    seedBase: orderSeed(stops),
-    isCheapest: !revealedOptions,
-  };
-
-  const displayedOptions = revealedOptions ? revealedOptions.slice(0, 5) : [defaultOption];
-  const activeOption = displayedOptions[selectedOptionIndex] || displayedOptions[0];
-
-  const itinerary = useMemo(
-    () =>
-      buildItineraryForOrder(
-        selected.dOff,
-        selected.rOff,
-        activeOption.order,
-        origin,
-        destination,
-        activeOption.seedBase
-      ),
-    [selected, stopsKey, selectedOptionIndex, revealedOptions]
-  );
-  const legPrices = activeOption.legBase.map((b) =>
-    Math.round((b / activeOption.baseTotal) * activeOption.total)
-  );
 
   return (
     <div
@@ -662,7 +485,7 @@ export default function FlightFareGrid() {
         />
         <SummaryCard
           label="Cheapest in this grid"
-          value={`$${displayMatrix[cheapestKey].total.toLocaleString()}`}
+          value={`$${matrix[cheapestKey].total.toLocaleString()}`}
           sub={`${formatDate(addDays(DEPART_CENTER, cheapDOff))} → ${formatDate(
             addDays(RETURN_CENTER, cheapROff)
           )}`}
@@ -754,7 +577,7 @@ export default function FlightFareGrid() {
                     </div>
                   </div>
                   {OFFSETS.map((rOff) => {
-                    const entry = displayMatrix[`${dOff}_${rOff}`];
+                    const entry = matrix[`${dOff}_${rOff}`];
                     const isSelected = selected.dOff === dOff && selected.rOff === rOff;
                     const isOriginal = dOff === 0 && rOff === 0;
                     const isCheapest = dOff === cheapDOff && rOff === cheapROff;
@@ -1111,7 +934,7 @@ export default function FlightFareGrid() {
                 </div>
               </div>
               <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#C7CED6" }}>
-                ${legPrices[i].toLocaleString()}
+                ${leg.price.toLocaleString()}
               </div>
             </div>
           ))}
@@ -1119,14 +942,66 @@ export default function FlightFareGrid() {
       </div>
 
       <div style={{ maxWidth: 980, margin: "20px auto 0", fontSize: 12, color: "#4B5560", lineHeight: 1.6 }}>
-        Proof of concept — prices and schedules are synthetic. The grid always prices the
-        stop order as arranged above — one lookup per date pair, matching what a real fare
-        API would cost. Checking other city orders (or alternates for a round trip) is a
-        separate, explicit action since it means pricing every possible ordering; once
-        checked for a given date pair, the result is cached and won't be re-checked on
-        revisit. The dot on each cell and the "Updated Xh ago" line simulate the same fare
-        cache — prices go stale over time and only refresh when you click "Refresh price."
-        Wire this to a real fare source to replace the fake data layer.
+        Prices come from calculations.js, backed by mockFetcher.js's simulated SerpApi calls
+        (see the technical plan) — swap that Fetcher for a real one and nothing here changes.
+        The grid always prices the stop order as arranged above — one fetch per date pair,
+        matching what a real fare API search would cost. Checking other city orders (or
+        alternates for a round trip) is a separate, explicit action since it means pricing
+        every possible ordering; once checked for a given date pair, the result is cached
+        and won't be re-fetched on revisit. The dot on each cell and the "Updated Xh ago"
+        line simulate a fare cache — prices go stale over time and only refresh when you
+        click "Refresh price," which re-fetches just that one cell.
+      </div>
+    </div>
+  );
+}
+
+function LoadingScreen({ origin, destination, stops, mode, progress }) {
+  const pct = Math.round((progress.done / Math.max(progress.total, 1)) * 100);
+  return (
+    <div
+      style={{
+        fontFamily: "'IBM Plex Sans', sans-serif",
+        background: "#0B0E11",
+        minHeight: "100vh",
+        color: "#E6E9ED",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+      }}
+    >
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+        .mono { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+        @keyframes pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+        .pulse-dot { animation: pulse 1s ease-in-out infinite; }
+      `}</style>
+      <div style={{ maxWidth: 420, width: "100%", textAlign: "center" }}>
+        <div
+          className="mono pulse-dot"
+          style={{ fontSize: 12, letterSpacing: "0.14em", color: "#E8A33D", textTransform: "uppercase", marginBottom: 14 }}
+        >
+          Fetching fares
+        </div>
+        <div style={{ fontSize: 15, color: "#C7CED6", marginBottom: 18 }}>
+          {mode === "roundtrip"
+            ? `${ORIGINS[origin].city} round trip`
+            : `${ORIGINS[origin].city} → ${stops.map((s) => CITIES[s].city).join(" → ")} → ${ORIGINS[destination].city}`}
+        </div>
+        <div style={{ background: "#14181D", border: "1px solid #22282F", borderRadius: 8, height: 8, overflow: "hidden" }}>
+          <div
+            style={{
+              width: `${pct}%`,
+              height: "100%",
+              background: "#E8A33D",
+              transition: "width 150ms ease",
+            }}
+          />
+        </div>
+        <div className="mono" style={{ fontSize: 12, color: "#7C8691", marginTop: 10 }}>
+          {progress.done} / {progress.total} date pairs priced ({pct}%)
+        </div>
       </div>
     </div>
   );

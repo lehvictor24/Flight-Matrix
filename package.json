@@ -1,0 +1,5 @@
+{
+  "name": "flight-matrix-package",
+  "private": true,
+  "type": "module"
+}

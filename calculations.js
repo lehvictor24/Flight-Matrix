@@ -9,7 +9,7 @@
 //   buildMatrix()      -> tier 1, one fetch per grid cell (§3 cache-first target)
 //   generateOptions()  -> tier 2, one fetch per permutation, only run on demand (§8)
 
-const { fetchFare } = require("./mockFetcher");
+import { fetchFare } from "./mockFetcher.js";
 
 const OFFSETS = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
 
@@ -80,9 +80,15 @@ async function computePriceForOrder(stopsOrder, origin, destination, dOff, rOff)
  * TIER 1 — cheap grid pricing. One fetch per cell, using the single stop
  * order passed in (not every permutation). Matches §3 of the plan: this is
  * the only pricing that should run automatically for a whole grid.
+ *
+ * @param {(done: number, total: number) => void} [onProgress] - optional,
+ *   called after each cell resolves so a caller (e.g. the frontend) can show
+ *   real fetch progress instead of blocking silently for ~121 calls.
  */
-async function buildMatrix(stops, origin, destination) {
+async function buildMatrix(stops, origin, destination, onProgress) {
   const grid = {};
+  const total = OFFSETS.length * OFFSETS.length;
+  let done = 0;
   // Sequential to keep this simple and obviously rate-limited; a real Fetcher
   // would batch/dedupe per §4-§5 instead of firing 121 calls in parallel.
   for (const dOff of OFFSETS) {
@@ -92,8 +98,11 @@ async function buildMatrix(stops, origin, destination) {
         total: priced.total,
         legBase: priced.legBase,
         baseTotal: priced.baseTotal,
+        legs: priced.legs,
         order: stops,
       };
+      done += 1;
+      if (onProgress) onProgress(done, total);
     }
   }
   return grid;
@@ -132,6 +141,7 @@ async function generateOptions(stops, origin, destination, dOff, rOff) {
     total: Math.round(base.total * v.mult),
     legBase: base.legBase.map((b) => b * v.mult),
     baseTotal: base.baseTotal * v.mult,
+    legs: base.legs.map((l) => ({ ...l, price: Math.round(l.price * v.mult) })),
     label: v.label,
   }));
   priced.sort((a, b) => a.total - b.total);
@@ -186,10 +196,12 @@ function buildItineraryForOrder(dOff, rOff, stopsOrder, origin, destination, leg
   return { legs: itineraryLegs, nightsPerStop, totalNights };
 }
 
-module.exports = {
+export {
   OFFSETS,
   CITIES,
   ORIGINS,
+  DEPART_CENTER,
+  RETURN_CENTER,
   buildMatrix,
   generateOptions,
   computePriceForOrder,

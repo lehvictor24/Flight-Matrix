@@ -4,8 +4,8 @@
 // check other orders for one cell (tier 2, on demand), build an itinerary,
 // and report the simulated API call count against a daily budget cap.
 
-const { buildMatrix, generateOptions, buildItineraryForOrder, CITIES } = require("./calculations");
-const { getCallsMade, resetCallCounter } = require("./mockFetcher");
+import { buildMatrix, generateOptions, buildItineraryForOrder, CITIES } from "./calculations.js";
+import { getCallsMade, resetCallCounter } from "./mockFetcher.js";
 
 const DAILY_CALL_CAP = 200; // matches §6 of the technical plan
 
