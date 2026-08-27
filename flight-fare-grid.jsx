@@ -1,23 +1,58 @@
 import { useState, useMemo, useEffect, Fragment } from "react";
-import {
-  OFFSETS,
-  CITIES,
-  ORIGINS,
-  DEPART_CENTER,
-  RETURN_CENTER,
-  buildMatrix,
-  generateOptions,
-  computePriceForOrder,
-  buildItineraryForOrder,
-} from "./calculations.js";
+import { OFFSETS, CITIES, ORIGINS, DEPART_CENTER, RETURN_CENTER, buildItineraryForOrder } from "./calculations.js";
 
 // ---------------------------------------------------------------------------
-// Pricing itself comes from calculations.js (backed by mockFetcher.js's
-// simulated SerpApi calls, per the technical plan's two-cost-tier model).
-// This file is presentation only — deterministic display helpers (dates,
-// colors, simulated cache-freshness age) live here since they don't cost an
-// API call and the Fetcher doesn't need to know about them.
+// Pricing comes from the local API server (server/http.js) via fetch() — see
+// the technical plan §8/§10. That server is itself backed by mockFetcher.js's
+// simulated SerpApi calls, routed through the cache/dedupe/budget layers
+// (server/cache.js, dedupe.js, budget.js), so nothing here ever reaches a real
+// external API. Only buildItineraryForOrder + static route metadata are still
+// imported directly from calculations.js, since that's pure calculation with
+// no Fetcher call involved — no need to round-trip it over the network.
+//
+// Run `npm run server` alongside `npm run dev` (or `./run.sh`, which starts
+// both) — Vite proxies /api/* to it, see vite.config.js.
 // ---------------------------------------------------------------------------
+
+async function apiGetGrid(origin, destination, stops) {
+  const params = new URLSearchParams({ origin, destination, stops: stops.join(",") });
+  const res = await fetch(`/api/fare-grid?${params}`);
+  if (!res.ok) throw new Error(`GET /api/fare-grid -> ${res.status}`);
+  return (await res.json()).grid;
+}
+
+async function apiGetCheckedOptions(origin, destination, stops, dOff, rOff) {
+  const params = new URLSearchParams({
+    origin,
+    destination,
+    stops: stops.join(","),
+    departOffset: String(dOff),
+    returnOffset: String(rOff),
+  });
+  const res = await fetch(`/api/fare-options?${params}`);
+  if (!res.ok) throw new Error(`GET /api/fare-options -> ${res.status}`);
+  return (await res.json()).options;
+}
+
+async function apiCheckOptions(origin, destination, stops, dOff, rOff) {
+  const res = await fetch(`/api/fare-options/check`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ origin, destination, stops, dOff, rOff }),
+  });
+  if (!res.ok) throw new Error(`POST /api/fare-options/check -> ${res.status}`);
+  return (await res.json()).options;
+}
+
+async function apiRefreshCell(origin, destination, stops, dOff, rOff) {
+  const res = await fetch(`/api/fare-cell/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ origin, destination, stops, dOff, rOff }),
+  });
+  if (!res.ok) throw new Error(`POST /api/fare-cell/refresh -> ${res.status}`);
+  return res.json(); // { total, legs, order }
+}
 
 function seededNoise(x, y, seed) {
   const v = Math.sin(x * 12.9898 + y * 78.233 + seed * 37.719) * 43758.5453;
@@ -92,12 +127,12 @@ export default function FlightFareGrid() {
   const [multiStops, setMultiStops] = useState(DEFAULT_MULTI_STOPS);
   const [selected, setSelected] = useState({ dOff: 0, rOff: 0 });
   const [selectedOptionIndex, setSelectedOptionIndex] = useState(0);
-  const [matrix, setMatrix] = useState({}); // dOff_rOff -> { total, legBase, baseTotal, legs, order }
-  const [matrixProgress, setMatrixProgress] = useState({ done: 0, total: 1 });
+  const [matrix, setMatrix] = useState({}); // dOff_rOff -> { total, legs, order }
+  const [matrixError, setMatrixError] = useState(null);
   const [refreshedAt, setRefreshedAt] = useState({}); // cacheKey -> timestamp, for manually-refreshed cells
   const [refreshingKey, setRefreshingKey] = useState(null);
-  const [optionsCache, setOptionsCache] = useState({}); // fullCacheKey -> options array
-  const [optionsLoadingKey, setOptionsLoadingKey] = useState(null);
+  const [checkedOptions, setCheckedOptions] = useState([]); // GET /api/fare-options result for the selected cell
+  const [isCheckingOptions, setIsCheckingOptions] = useState(false); // POST /api/fare-options/check in flight
   const [showRawData, setShowRawData] = useState(false);
 
   const stops = mode === "roundtrip" ? [singleStop] : multiStops;
@@ -135,53 +170,61 @@ export default function FlightFareGrid() {
     resetSelection();
   }
 
-  // Rebuild the grid (tier 1 — one Fetcher call per cell) whenever the route
-  // config changes, and clear anything that only makes sense against the
-  // previous matrix/options. The exact-date cell (offset 0,0) is pre-fetched
-  // as "already cached," standing in for someone already having checked this
-  // popular date pair recently — everything else starts uncached until
-  // explicitly checked via "Check other orders."
+  // Rebuild the grid (tier 1 — GET /api/fare-grid, one cache-through lookup
+  // per cell server-side) whenever the route config changes, and clear
+  // anything that only makes sense against the previous matrix.
   useEffect(() => {
     let cancelled = false;
     setMatrix({});
-    setMatrixProgress({ done: 0, total: OFFSETS.length * OFFSETS.length });
+    setMatrixError(null);
     setRefreshedAt({});
-    setOptionsCache({});
 
-    buildMatrix(stops, origin, destination, (done, total) => {
-      if (!cancelled) setMatrixProgress({ done, total });
-    }).then((grid) => {
-      if (cancelled) return;
-      setMatrix(grid);
-      const seededKey = `${stopsKey}__0_0`;
-      generateOptions(stops, origin, destination, 0, 0).then((seeded) => {
-        if (!cancelled) setOptionsCache({ [seededKey]: seeded });
+    apiGetGrid(origin, destination, stops)
+      .then((grid) => {
+        if (!cancelled) setMatrix(grid);
+      })
+      .catch((err) => {
+        if (!cancelled) setMatrixError(err.message);
       });
-    });
 
     return () => {
       cancelled = true;
     };
   }, [stopsKey]);
 
-  const isMatrixLoading = Object.keys(matrix).length === 0;
+  const isMatrixLoading = Object.keys(matrix).length === 0 && !matrixError;
+
+  // Whichever cell is selected, ask the server what's already been checked for
+  // it (GET /api/fare-options — cache-only, always free, per plan §8). Runs
+  // on every selection change so results stay live across sessions since the
+  // server persists trip_price_cache to disk.
+  useEffect(() => {
+    let cancelled = false;
+    apiGetCheckedOptions(origin, destination, stops, selected.dOff, selected.rOff)
+      .then((options) => {
+        if (!cancelled) setCheckedOptions(options);
+      })
+      .catch(() => {
+        if (!cancelled) setCheckedOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stopsKey, selected.dOff, selected.rOff]);
 
   async function refreshCell(dOff, rOff) {
     const key = `${dOff}_${rOff}`;
     setRefreshingKey(key);
-    const priced = await computePriceForOrder(stops, origin, destination, dOff, rOff);
-    setMatrix((prev) => ({
-      ...prev,
-      [key]: {
-        total: priced.total,
-        legBase: priced.legBase,
-        baseTotal: priced.baseTotal,
-        legs: priced.legs,
-        order: stops,
-      },
-    }));
-    setRefreshedAt((prev) => ({ ...prev, [key]: Date.now() }));
-    setRefreshingKey(null);
+    try {
+      const result = await apiRefreshCell(origin, destination, stops, dOff, rOff);
+      setMatrix((prev) => ({
+        ...prev,
+        [key]: { total: result.total, legs: result.legs, order: result.order },
+      }));
+      setRefreshedAt((prev) => ({ ...prev, [key]: Date.now() }));
+    } finally {
+      setRefreshingKey(null);
+    }
   }
 
   function freshnessLabel(dOff, rOff) {
@@ -214,16 +257,13 @@ export default function FlightFareGrid() {
   }, [matrix]);
 
   const cellKey = `${selected.dOff}_${selected.rOff}`;
-  const fullCacheKey = `${stopsKey}__${cellKey}`;
-  const revealedOptions = optionsCache[fullCacheKey];
-  const isLoadingOptions = optionsLoadingKey === fullCacheKey;
+  const revealedOptions = checkedOptions.length > 0 ? checkedOptions : null;
+  const isLoadingOptions = isCheckingOptions;
 
   const matrixEntry = matrix[cellKey];
   const defaultOption = matrixEntry && {
     order: stops,
     total: matrixEntry.total,
-    legBase: matrixEntry.legBase,
-    baseTotal: matrixEntry.baseTotal,
     legs: matrixEntry.legs,
     label: stops.map((s) => CITIES[s].city).join(" → "),
     isCheapest: !revealedOptions,
@@ -249,14 +289,14 @@ export default function FlightFareGrid() {
     [selected, stopsKey, selectedOptionIndex, revealedOptions, activeOption]
   );
 
-  if (isMatrixLoading) {
+  if (isMatrixLoading || matrixError) {
     return (
       <LoadingScreen
         origin={origin}
         destination={destination}
         stops={stops}
         mode={mode}
-        progress={matrixProgress}
+        error={matrixError}
       />
     );
   }
@@ -287,22 +327,20 @@ export default function FlightFareGrid() {
     fullMatrix: fullMatrixWithDates,
   };
 
-  // The permutation search (all city orders) is expensive against a real
-  // API, so it only runs when explicitly requested via the button below —
-  // and once run for a given route+cell, the result is cached so revisiting
-  // that cell (or switching away and back) never re-triggers it.
+  // The permutation search (all city orders) is expensive against a real API,
+  // so it only runs when explicitly requested via the button below — POST
+  // /api/fare-options/check (plan §8), which persists every result to
+  // trip_price_cache so revisiting this cell (or reloading the page) never
+  // re-triggers it.
   async function requestOptions() {
-    if (optionsCache[fullCacheKey] || optionsLoadingKey) return;
-    setOptionsLoadingKey(fullCacheKey);
-    const computed = await generateOptions(
-      stops,
-      origin,
-      destination,
-      selected.dOff,
-      selected.rOff
-    );
-    setOptionsCache((prev) => ({ ...prev, [fullCacheKey]: computed }));
-    setOptionsLoadingKey(null);
+    if (checkedOptions.length > 0 || isCheckingOptions) return;
+    setIsCheckingOptions(true);
+    try {
+      const options = await apiCheckOptions(origin, destination, stops, selected.dOff, selected.rOff);
+      setCheckedOptions(options);
+    } finally {
+      setIsCheckingOptions(false);
+    }
   }
 
   return (
@@ -1033,8 +1071,7 @@ export default function FlightFareGrid() {
   );
 }
 
-function LoadingScreen({ origin, destination, stops, mode, progress }) {
-  const pct = Math.round((progress.done / Math.max(progress.total, 1)) * 100);
+function LoadingScreen({ origin, destination, stops, mode, error }) {
   return (
     <div
       style={{
@@ -1052,33 +1089,36 @@ function LoadingScreen({ origin, destination, stops, mode, progress }) {
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
         .mono { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
         @keyframes pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+        @keyframes indeterminate { 0% { transform: translateX(-100%); } 100% { transform: translateX(220%); } }
         .pulse-dot { animation: pulse 1s ease-in-out infinite; }
+        .indeterminate-fill { animation: indeterminate 1.1s ease-in-out infinite; }
       `}</style>
       <div style={{ maxWidth: 420, width: "100%", textAlign: "center" }}>
         <div
           className="mono pulse-dot"
-          style={{ fontSize: 12, letterSpacing: "0.14em", color: "#E8A33D", textTransform: "uppercase", marginBottom: 14 }}
+          style={{ fontSize: 12, letterSpacing: "0.14em", color: error ? "#F87171" : "#E8A33D", textTransform: "uppercase", marginBottom: 14 }}
         >
-          Fetching fares
+          {error ? "Request failed" : "Fetching fares from local API server"}
         </div>
         <div style={{ fontSize: 15, color: "#C7CED6", marginBottom: 18 }}>
           {mode === "roundtrip"
             ? `${ORIGINS[origin].city} round trip`
             : `${ORIGINS[origin].city} → ${stops.map((s) => CITIES[s].city).join(" → ")} → ${ORIGINS[destination].city}`}
         </div>
-        <div style={{ background: "#14181D", border: "1px solid #22282F", borderRadius: 8, height: 8, overflow: "hidden" }}>
-          <div
-            style={{
-              width: `${pct}%`,
-              height: "100%",
-              background: "#E8A33D",
-              transition: "width 150ms ease",
-            }}
-          />
-        </div>
-        <div className="mono" style={{ fontSize: 12, color: "#7C8691", marginTop: 10 }}>
-          {progress.done} / {progress.total} date pairs priced ({pct}%)
-        </div>
+        {error ? (
+          <div className="mono" style={{ fontSize: 12, color: "#F87171" }}>
+            {error} — is the API server running? (<code>npm run server</code>)
+          </div>
+        ) : (
+          <>
+            <div style={{ background: "#14181D", border: "1px solid #22282F", borderRadius: 8, height: 8, overflow: "hidden" }}>
+              <div className="indeterminate-fill" style={{ width: "35%", height: "100%", background: "#E8A33D" }} />
+            </div>
+            <div className="mono" style={{ fontSize: 12, color: "#7C8691", marginTop: 10 }}>
+              GET /api/fare-grid — ~121 cache-through lookups server-side
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

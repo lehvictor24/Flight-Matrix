@@ -12,16 +12,6 @@
 const USE_LIVE_API =
   typeof process !== "undefined" && process.env && process.env.USE_LIVE_API === "true";
 
-// Tracks calls made this process — stands in for the api_usage table (§2/§6).
-// A real Fetcher increments a Postgres counter here instead.
-let callsMade = 0;
-function getCallsMade() {
-  return callsMade;
-}
-function resetCallCounter() {
-  callsMade = 0;
-}
-
 // Rough per-city one-way baseline, just enough spread to make grids/orderings
 // look organic. Extend freely — the Fetcher doesn't care what's in here.
 const CITY_BASE = {
@@ -70,7 +60,6 @@ export async function fetchFare({ origin, destination, stopsOrder, dOff, rOff })
   }
 
   await simulatedNetworkDelay();
-  callsMade += 1;
 
   const originFactor = ORIGIN_FACTOR[origin] ?? 1.0;
   const destFactor = ORIGIN_FACTOR[destination] ?? 1.0;
@@ -125,4 +114,4 @@ export async function fetchFare({ origin, destination, stopsOrder, dOff, rOff })
   };
 }
 
-export { getCallsMade, resetCallCounter, USE_LIVE_API };
+export { USE_LIVE_API };

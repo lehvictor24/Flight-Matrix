@@ -64,9 +64,14 @@ function permute(arr) {
 /**
  * Price ONE specific ordering of stops for ONE date pair. This is the unit
  * that costs a real API call — everything else composes calls to this.
+ *
+ * @param {typeof fetchFare} [fetcher] - defaults to the raw mockFetcher, but the
+ *   server (server/pricingService.js) injects a cache/dedupe/budget-wrapped
+ *   version instead, so this file stays Fetcher-agnostic and independently
+ *   testable without pulling in the whole server stack.
  */
-async function computePriceForOrder(stopsOrder, origin, destination, dOff, rOff) {
-  const result = await fetchFare({ origin, destination, stopsOrder, dOff, rOff });
+async function computePriceForOrder(stopsOrder, origin, destination, dOff, rOff, fetcher = fetchFare) {
+  const result = await fetcher({ origin, destination, stopsOrder, dOff, rOff });
   return {
     order: stopsOrder,
     total: result.total,
@@ -85,7 +90,7 @@ async function computePriceForOrder(stopsOrder, origin, destination, dOff, rOff)
  *   called after each cell resolves so a caller (e.g. the frontend) can show
  *   real fetch progress instead of blocking silently for ~121 calls.
  */
-async function buildMatrix(stops, origin, destination, onProgress) {
+async function buildMatrix(stops, origin, destination, onProgress, fetcher = fetchFare) {
   const grid = {};
   const total = OFFSETS.length * OFFSETS.length;
   let done = 0;
@@ -93,7 +98,7 @@ async function buildMatrix(stops, origin, destination, onProgress) {
   // would batch/dedupe per §4-§5 instead of firing 121 calls in parallel.
   for (const dOff of OFFSETS) {
     for (const rOff of OFFSETS) {
-      const priced = await computePriceForOrder(stops, origin, destination, dOff, rOff);
+      const priced = await computePriceForOrder(stops, origin, destination, dOff, rOff, fetcher);
       grid[`${dOff}_${rOff}`] = {
         total: priced.total,
         legBase: priced.legBase,
@@ -113,12 +118,12 @@ async function buildMatrix(stops, origin, destination, onProgress) {
  * Only call this from the explicit "check other orders" action (§8), never
  * automatically per grid cell.
  */
-async function generateOptions(stops, origin, destination, dOff, rOff) {
+async function generateOptions(stops, origin, destination, dOff, rOff, fetcher = fetchFare) {
   if (stops.length > 1) {
     const orders = permute(stops);
     const priced = [];
     for (const order of orders) {
-      priced.push(await computePriceForOrder(order, origin, destination, dOff, rOff));
+      priced.push(await computePriceForOrder(order, origin, destination, dOff, rOff, fetcher));
     }
     priced.sort((a, b) => a.total - b.total);
     return priced.map((p, i) => ({
@@ -130,7 +135,7 @@ async function generateOptions(stops, origin, destination, dOff, rOff) {
 
   // Round trip: one real fetch, then a couple of plausible carrier-mix
   // variants derived from it rather than separate paid calls each.
-  const base = await computePriceForOrder(stops, origin, destination, dOff, rOff);
+  const base = await computePriceForOrder(stops, origin, destination, dOff, rOff, fetcher);
   const variants = [
     { label: "Best value", mult: 1.0 },
     { label: "Fewer connections", mult: 1.09 },

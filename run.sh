@@ -7,5 +7,10 @@ if [ ! -d node_modules ]; then
   npm install
 fi
 
-echo "Starting dev server..."
+echo "Starting API server (server/http.js) on :8787..."
+npm run server &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null' EXIT
+
+echo "Starting Vite dev server..."
 npm run dev
