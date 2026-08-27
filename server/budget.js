@@ -2,8 +2,10 @@
 //
 // Daily call cap (plan §6), checked before any Fetcher call fires — not after.
 // Once the cap is hit, callers fall back to cache-only mode; this module never
-// lets a call through past the cap. Default matches the plan's SerpApi Starter
-// sizing; override with API_DAILY_CAP for a tighter dev cap (plan §12).
+// lets a call through past the cap. Since mockFetcher.js never hits a real paid
+// API, there's no real spend to cap locally — the cap is off (Infinity) by
+// default. Set API_DAILY_CAP to opt back into a dev cap (plan §12), e.g. to
+// rehearse the cache-only fallback path.
 //
 // Also exposes getBudgetStatus() — the cost/usage monitor (§11 "Monitoring")
 // reads through here: today's calls vs cap, estimated cost (server/costModel.js),
@@ -12,7 +14,7 @@
 import { getApiUsage, incrementApiUsage, getUsageForMonth, today } from "./storage.js";
 import { COST_PER_CALL_USD, MONTHLY_BUDGET_USD, round2 } from "./costModel.js";
 
-const DAILY_CALL_CAP = Number(process.env.API_DAILY_CAP) || 200;
+const DAILY_CALL_CAP = Number(process.env.API_DAILY_CAP) || Infinity;
 
 export function isOverBudget() {
   return getApiUsage(today()).callsMade >= DAILY_CALL_CAP;
@@ -28,7 +30,7 @@ export function getBudgetStatus() {
   return {
     day,
     callsMade: usage.callsMade,
-    cap: DAILY_CALL_CAP,
+    cap: Number.isFinite(DAILY_CALL_CAP) ? DAILY_CALL_CAP : null,
     overBudget: usage.callsMade >= DAILY_CALL_CAP,
     costTodayUsd: usage.costEstimate ?? 0,
     costPerCallUsd: COST_PER_CALL_USD,

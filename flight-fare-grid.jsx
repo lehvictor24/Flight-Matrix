@@ -166,6 +166,7 @@ export default function FlightFareGrid() {
   const [checkedOptions, setCheckedOptions] = useState([]); // GET /api/fare-options result for the selected cell
   const [isCheckingOptions, setIsCheckingOptions] = useState(false); // POST /api/fare-options/check in flight
   const [showRawData, setShowRawData] = useState(false);
+  const [actionError, setActionError] = useState(null); // surfaces a failed refresh/check instead of failing silently
   const [usage, setUsage] = useState(null); // GET /api/usage — estimated cost/usage monitor
 
   const stops = mode === "roundtrip" ? [singleStop] : multiStops;
@@ -268,6 +269,7 @@ export default function FlightFareGrid() {
   async function refreshCell(dOff, rOff) {
     const key = `${dOff}_${rOff}`;
     setRefreshingKey(key);
+    setActionError(null);
     try {
       const result = await apiRefreshCell(origin, destination, stops, dOff, rOff, departCenterStr, returnCenterStr);
       setMatrix((prev) => ({
@@ -275,6 +277,8 @@ export default function FlightFareGrid() {
         [key]: { total: result.total, legs: result.legs, order: result.order },
       }));
       setRefreshedAt((prev) => ({ ...prev, [key]: Date.now() }));
+    } catch (err) {
+      setActionError(err.message);
     } finally {
       setRefreshingKey(null);
       refreshUsage();
@@ -396,9 +400,12 @@ export default function FlightFareGrid() {
   async function requestOptions() {
     if (checkedOptions.length > 0 || isCheckingOptions) return;
     setIsCheckingOptions(true);
+    setActionError(null);
     try {
       const options = await apiCheckOptions(origin, destination, stops, selected.dOff, selected.rOff, departCenterStr, returnCenterStr);
       setCheckedOptions(options);
+    } catch (err) {
+      setActionError(err.message);
     } finally {
       setIsCheckingOptions(false);
       refreshUsage();
@@ -919,6 +926,23 @@ export default function FlightFareGrid() {
         </button>
       </div>
 
+      {actionError && (
+        <div
+          style={{
+            maxWidth: 980,
+            margin: "10px auto 0",
+            background: "#2A1417",
+            border: "1px solid #7F1D1D",
+            color: "#F87171",
+            borderRadius: 6,
+            padding: "8px 12px",
+            fontSize: 12,
+          }}
+        >
+          {actionError}
+        </div>
+      )}
+
       {/* Other flight options */}
       <div
         style={{
@@ -1355,7 +1379,7 @@ function SummaryCard({ label, value, sub, accent = "#E6E9ED" }) {
 }
 
 function UsageMonitor({ usage }) {
-  const dailyPct = Math.min(100, Math.round((usage.callsMade / usage.cap) * 100));
+  const dailyPct = usage.cap === null ? 0 : Math.min(100, Math.round((usage.callsMade / usage.cap) * 100));
   const monthlyPct =
     usage.monthlyBudgetUsd > 0 ? Math.min(100, Math.round((usage.costThisMonthUsd / usage.monthlyBudgetUsd) * 100)) : 0;
   const barColor = (pct) => (pct >= 100 ? "#F87171" : pct >= 75 ? "#E8A33D" : "#4ADE80");
@@ -1381,12 +1405,12 @@ function UsageMonitor({ usage }) {
       <span style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>API usage (est.)</span>
 
       <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span className="mono">
-          {usage.callsMade}/{usage.cap} calls today
-        </span>
-        <span style={{ width: 60, height: 5, borderRadius: 3, background: "#22282F", overflow: "hidden" }}>
-          <span style={{ display: "block", width: `${dailyPct}%`, height: "100%", background: barColor(dailyPct) }} />
-        </span>
+        <span className="mono">{usage.cap === null ? `${usage.callsMade} calls today (no cap)` : `${usage.callsMade}/${usage.cap} calls today`}</span>
+        {usage.cap !== null && (
+          <span style={{ width: 60, height: 5, borderRadius: 3, background: "#22282F", overflow: "hidden" }}>
+            <span style={{ display: "block", width: `${dailyPct}%`, height: "100%", background: barColor(dailyPct) }} />
+          </span>
+        )}
       </span>
 
       <span className="mono">${usage.costTodayUsd.toFixed(2)} today</span>
