@@ -5,6 +5,28 @@ for the full architecture). This package replaces the frontend prototype's synth
 math with a real calculation layer driven by a Fetcher interface — currently a mock,
 swappable for a live SerpApi Fetcher later without touching anything else.
 
+## Running the frontend
+
+```
+./run.sh
+```
+
+or manually:
+
+```
+npm install
+npm run dev
+```
+
+Opens the real `flight-fare-grid.jsx` component (via Vite + React) at the printed
+localhost URL, wired to `calculations.js`/`mockFetcher.js`. `npm run build` produces
+a static `dist/` bundle; `npm run demo` runs `demo.js` (the Node-only pipeline check)
+without starting a browser at all.
+
+`flight-fare-grid-demo.html` is a pre-bundled, dependency-free fallback (no `npm
+install` needed) with the same UI/behavior plus a "View raw data" JSON panel — open
+it directly in a browser if you don't want to install anything.
+
 ## Files
 
 - **`mockFetcher.js`** — placeholder for the real SerpApi Fetcher (plan §5). Generates
