@@ -54,6 +54,12 @@ async function apiRefreshCell(origin, destination, stops, dOff, rOff) {
   return res.json(); // { total, legs, order }
 }
 
+async function apiGetUsage() {
+  const res = await fetch(`/api/usage`);
+  if (!res.ok) throw new Error(`GET /api/usage -> ${res.status}`);
+  return res.json();
+}
+
 function seededNoise(x, y, seed) {
   const v = Math.sin(x * 12.9898 + y * 78.233 + seed * 37.719) * 43758.5453;
   return v - Math.floor(v);
@@ -134,6 +140,7 @@ export default function FlightFareGrid() {
   const [checkedOptions, setCheckedOptions] = useState([]); // GET /api/fare-options result for the selected cell
   const [isCheckingOptions, setIsCheckingOptions] = useState(false); // POST /api/fare-options/check in flight
   const [showRawData, setShowRawData] = useState(false);
+  const [usage, setUsage] = useState(null); // GET /api/usage — estimated cost/usage monitor
 
   const stops = mode === "roundtrip" ? [singleStop] : multiStops;
   const stopsKey = origin + "|" + destination + "|" + mode + "|" + stops.join(",");
@@ -170,6 +177,12 @@ export default function FlightFareGrid() {
     resetSelection();
   }
 
+  function refreshUsage() {
+    apiGetUsage()
+      .then(setUsage)
+      .catch(() => {}); // best-effort — the monitor shouldn't break the app if it fails
+  }
+
   // Rebuild the grid (tier 1 — GET /api/fare-grid, one cache-through lookup
   // per cell server-side) whenever the route config changes, and clear
   // anything that only makes sense against the previous matrix.
@@ -185,6 +198,9 @@ export default function FlightFareGrid() {
       })
       .catch((err) => {
         if (!cancelled) setMatrixError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) refreshUsage();
       });
 
     return () => {
@@ -224,6 +240,7 @@ export default function FlightFareGrid() {
       setRefreshedAt((prev) => ({ ...prev, [key]: Date.now() }));
     } finally {
       setRefreshingKey(null);
+      refreshUsage();
     }
   }
 
@@ -340,6 +357,7 @@ export default function FlightFareGrid() {
       setCheckedOptions(options);
     } finally {
       setIsCheckingOptions(false);
+      refreshUsage();
     }
   }
 
@@ -397,6 +415,8 @@ export default function FlightFareGrid() {
           </h1>
         </div>
       </div>
+
+      {usage && <UsageMonitor usage={usage} />}
 
       {/* Mode toggle */}
       <div style={{ maxWidth: 980, margin: "0 auto 16px", display: "flex", gap: 10 }}>
@@ -738,11 +758,11 @@ export default function FlightFareGrid() {
           }}
         >
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />
-          fresh
+          fresh (&lt;6h)
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#E8A33D", display: "inline-block", marginLeft: 6 }} />
-          aging
+          aging (6–24h)
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#F87171", display: "inline-block", marginLeft: 6 }} />
-          stale
+          stale (&gt;24h)
         </span>
       </div>
 
@@ -1173,6 +1193,61 @@ function SummaryCard({ label, value, sub, accent = "#E6E9ED" }) {
         {value}
       </div>
       <div style={{ fontSize: 12, color: "#7C8691", marginTop: 2 }}>{sub}</div>
+    </div>
+  );
+}
+
+function UsageMonitor({ usage }) {
+  const dailyPct = Math.min(100, Math.round((usage.callsMade / usage.cap) * 100));
+  const monthlyPct =
+    usage.monthlyBudgetUsd > 0 ? Math.min(100, Math.round((usage.costThisMonthUsd / usage.monthlyBudgetUsd) * 100)) : 0;
+  const barColor = (pct) => (pct >= 100 ? "#F87171" : pct >= 75 ? "#E8A33D" : "#4ADE80");
+
+  return (
+    <div
+      style={{
+        maxWidth: 980,
+        margin: "0 auto 20px",
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 16,
+        background: "#14181D",
+        border: "1px solid #22282F",
+        borderRadius: 8,
+        padding: "8px 14px",
+        fontSize: 11,
+        color: "#7C8691",
+      }}
+      title="Estimated — mockFetcher.js never calls a real paid API (server/costModel.js)"
+    >
+      <span style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>API usage (est.)</span>
+
+      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span className="mono">
+          {usage.callsMade}/{usage.cap} calls today
+        </span>
+        <span style={{ width: 60, height: 5, borderRadius: 3, background: "#22282F", overflow: "hidden" }}>
+          <span style={{ display: "block", width: `${dailyPct}%`, height: "100%", background: barColor(dailyPct) }} />
+        </span>
+      </span>
+
+      <span className="mono">${usage.costTodayUsd.toFixed(2)} today</span>
+
+      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span className="mono">
+          ${usage.costThisMonthUsd.toFixed(2)}/${usage.monthlyBudgetUsd.toFixed(0)} this month
+        </span>
+        <span style={{ width: 60, height: 5, borderRadius: 3, background: "#22282F", overflow: "hidden" }}>
+          <span style={{ display: "block", width: `${monthlyPct}%`, height: "100%", background: barColor(monthlyPct) }} />
+        </span>
+      </span>
+
+      <span className="mono">
+        {usage.cacheHitRatePctThisMonth === null ? "no lookups yet" : `${usage.cacheHitRatePctThisMonth.toFixed(0)}% cache hit`}
+      </span>
+
+      {usage.overBudget && <span style={{ color: "#F87171", fontWeight: 600 }}>⚠ over daily cap — cache-only mode</span>}
     </div>
   );
 }

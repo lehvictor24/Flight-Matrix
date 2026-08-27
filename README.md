@@ -32,6 +32,9 @@ Other scripts:
 - `npm run demo` — `demo.js`, a Node-only pipeline check (no server, no browser)
 - `npm run scheduler` — one-shot nightly diagonal refresh (`--loop` to repeat every 24h)
 - `npm run alerter` — checks alerts against cached prices, logs to `server/data/alerts.log`
+- `npm run usage` — cost/usage monitor report (today vs cap, month-to-date spend vs
+  estimated budget, cache hit rate) — see `server/costModel.js`, also visible live as
+  a strip in the frontend
 - `npm test` — the plan §11 test suite (TTL, dedupe, budget, integration), via Node's
   built-in test runner — zero extra dependencies
 
@@ -78,7 +81,7 @@ check, matching the plan's core guarantee.
 | `POST /api/fare-options/check` | cache-through | tier 2 — the only route allowed to price every permutation; rate-limited |
 | `POST /api/fare-cell/refresh` | cache-through | manual refresh, bypasses TTL, still budget-gated |
 | `POST /api/itinerary` | free | pure calculation, no Fetcher call |
-| `GET /api/usage` | free | today's `api_usage` vs the daily cap |
+| `GET /api/usage` | free | cost/usage monitor — today's calls vs cap, estimated cost, month-to-date, cache hit rate |
 | `GET`/`POST /api/alerts` | free | manage alert thresholds (§9) |
 
 ### Files
@@ -98,6 +101,11 @@ check, matching the plan's core guarantee.
   above it for turning a route+dates+order into a price.
 - **`server/dedupe.js`**, **`server/budget.js`** — in-flight coalescing and the
   daily call cap (`API_DAILY_CAP` env var, default 200).
+- **`server/costModel.js`** — mockFetcher.js never hits a real paid API, so this is
+  an **estimated** per-call price (`COST_PER_CALL_USD`, default $0.01) and monthly
+  budget (`MONTHLY_BUDGET_USD`, default $25, matching the plan's own cost math) —
+  override both once you know real SerpApi numbers. `server/usageMonitor.js` and
+  `GET /api/usage` are the only things that read from it.
 - **`server/pricingService.js`** — wires `calculations.js` to the cache layer;
   what `server/http.js`'s route handlers actually call.
 - **`demo.js`** — runs the full pipeline once and prints real `api_usage` (persisted

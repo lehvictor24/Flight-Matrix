@@ -4,22 +4,41 @@
 // Once the cap is hit, callers fall back to cache-only mode; this module never
 // lets a call through past the cap. Default matches the plan's SerpApi Starter
 // sizing; override with API_DAILY_CAP for a tighter dev cap (plan §12).
+//
+// Also exposes getBudgetStatus() — the cost/usage monitor (§11 "Monitoring")
+// reads through here: today's calls vs cap, estimated cost (server/costModel.js),
+// month-to-date totals against the estimated monthly budget, and cache hit rate.
 
-import { getApiUsage, incrementApiUsage } from "./storage.js";
+import { getApiUsage, incrementApiUsage, getUsageForMonth, today } from "./storage.js";
+import { COST_PER_CALL_USD, MONTHLY_BUDGET_USD, round2 } from "./costModel.js";
 
 const DAILY_CALL_CAP = Number(process.env.API_DAILY_CAP) || 200;
-
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export function isOverBudget() {
   return getApiUsage(today()).callsMade >= DAILY_CALL_CAP;
 }
 
 export function getBudgetStatus() {
-  const usage = getApiUsage(today());
-  return { day: today(), callsMade: usage.callsMade, cap: DAILY_CALL_CAP, overBudget: usage.callsMade >= DAILY_CALL_CAP };
+  const day = today();
+  const usage = getApiUsage(day);
+  const month = day.slice(0, 7);
+  const monthUsage = getUsageForMonth(month);
+  const monthLookups = monthUsage.cacheHits + monthUsage.cacheMisses;
+
+  return {
+    day,
+    callsMade: usage.callsMade,
+    cap: DAILY_CALL_CAP,
+    overBudget: usage.callsMade >= DAILY_CALL_CAP,
+    costTodayUsd: usage.costEstimate ?? 0,
+    costPerCallUsd: COST_PER_CALL_USD,
+    month,
+    callsThisMonth: monthUsage.callsMade,
+    costThisMonthUsd: round2(monthUsage.costEstimate),
+    monthlyBudgetUsd: MONTHLY_BUDGET_USD,
+    monthlyBudgetRemainingUsd: round2(Math.max(0, MONTHLY_BUDGET_USD - monthUsage.costEstimate)),
+    cacheHitRatePctThisMonth: monthLookups > 0 ? round2((monthUsage.cacheHits / monthLookups) * 100) : null,
+  };
 }
 
 /**

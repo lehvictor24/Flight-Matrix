@@ -9,6 +9,7 @@
     "server": "node server/http.js",
     "scheduler": "node server/scheduler.js",
     "alerter": "node server/alerter.js",
+    "usage": "node server/usageMonitor.js",
     "demo": "node demo.js",
     "test": "node --test tests/*.test.js"
   },

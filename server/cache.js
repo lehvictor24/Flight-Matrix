@@ -13,7 +13,14 @@
 import { fetchFare } from "../mockFetcher.js";
 import { dedupe } from "./dedupe.js";
 import { checkBudgetAndRecord, isOverBudget } from "./budget.js";
-import { getFareCacheRow, setFareCacheRow, getTripPriceCacheRow, setTripPriceCacheRow } from "./storage.js";
+import {
+  getFareCacheRow,
+  setFareCacheRow,
+  getTripPriceCacheRow,
+  setTripPriceCacheRow,
+  recordCacheEvent,
+  today,
+} from "./storage.js";
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -65,9 +72,13 @@ export async function getFare({ table, key, origin, destination, stopsOrder, dOf
   const existing = readRowFor(table)(key);
   const state = freshness(existing, departDate);
 
-  if (state === "fresh") return { row: existing, state };
+  if (state === "fresh") {
+    recordCacheEvent(today(), true);
+    return { row: existing, state };
+  }
 
   if (state === "stale") {
+    recordCacheEvent(today(), true); // still served from cache, just triggers a background refresh
     if (!isOverBudget()) {
       // Stale-while-revalidate: fire-and-forget, failures don't affect this read.
       dedupe(`${table}:${key}`, () =>
@@ -78,6 +89,7 @@ export async function getFare({ table, key, origin, destination, stopsOrder, dOf
   }
 
   // missing
+  recordCacheEvent(today(), false);
   if (isOverBudget()) {
     // Plan §6: over cap -> cache-only mode, never error outward from here.
     return { row: null, state: "missing-over-budget" };

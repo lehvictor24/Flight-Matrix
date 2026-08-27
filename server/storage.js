@@ -9,6 +9,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { estimatedCostForCalls } from "./costModel.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // DB_PATH is overridable so tests can point at a throwaway file instead of the
@@ -18,7 +19,7 @@ const DB_PATH = process.env.DB_PATH ? resolve(process.env.DB_PATH) : join(__dirn
 const EMPTY_DB = {
   fareCache: {}, // cache_key -> { origin, destination, stops, departDate, returnDate, total, legs, fetchedAt }
   tripPriceCache: {}, // cache_key -> { origin, destination, stops, departDate, returnDate, orderSequence, total, legs, fetchedAt }
-  apiUsage: {}, // day (YYYY-MM-DD) -> { callsMade, costEstimate }
+  apiUsage: {}, // day (YYYY-MM-DD) -> { callsMade, costEstimate, cacheHits, cacheMisses }
   alerts: [], // { id, routeSignature, thresholdPrice, active, lastTriggered }
 };
 
@@ -64,16 +65,42 @@ export function getAllTripPriceCacheRowsForRoute(routePrefix) {
     .map(([, row]) => row);
 }
 
-// ---- api_usage (§2/§6 budget tracking) ----
+// ---- api_usage (§2/§6 budget tracking + cost/usage monitor) ----
+export function today() {
+  return new Date().toISOString().slice(0, 10);
+}
 export function getApiUsage(day) {
-  return db.apiUsage[day] ?? { callsMade: 0, costEstimate: 0 };
+  return db.apiUsage[day] ?? { callsMade: 0, costEstimate: 0, cacheHits: 0, cacheMisses: 0 };
 }
 export function incrementApiUsage(day) {
   const row = { ...getApiUsage(day) };
   row.callsMade += 1;
+  row.costEstimate = estimatedCostForCalls(row.callsMade);
   db.apiUsage[day] = row;
   persist();
   return row;
+}
+export function recordCacheEvent(day, hit) {
+  const row = { ...getApiUsage(day) };
+  if (hit) row.cacheHits += 1;
+  else row.cacheMisses += 1;
+  db.apiUsage[day] = row;
+  persist();
+}
+/** @param {string} monthPrefix - "YYYY-MM" */
+export function getUsageForMonth(monthPrefix) {
+  const totals = { callsMade: 0, costEstimate: 0, cacheHits: 0, cacheMisses: 0 };
+  for (const [day, row] of Object.entries(db.apiUsage)) {
+    if (!day.startsWith(monthPrefix)) continue;
+    totals.callsMade += row.callsMade ?? 0;
+    totals.costEstimate += row.costEstimate ?? 0;
+    totals.cacheHits += row.cacheHits ?? 0;
+    totals.cacheMisses += row.cacheMisses ?? 0;
+  }
+  return totals;
+}
+export function getAllUsageDays() {
+  return db.apiUsage;
 }
 
 // ---- alerts (§9) ----
