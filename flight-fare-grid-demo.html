@@ -1,0 +1,927 @@
+<title>Flight Fare Grid</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; padding: 0; background: #0B0E11; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: #0B0E11;
+    color: #E6E9ED;
+  }
+  .mono { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+  .page { min-height: 100vh; padding: 28px 20px 60px; }
+  .section { max-width: 980px; margin: 0 auto; }
+  .card { background: #14181D; border: 1px solid #22282F; border-radius: 10px; }
+
+  .header { margin-bottom: 24px; }
+  .header-inner { border-bottom: 1px solid #22282F; padding-bottom: 18px; }
+  .eyebrow { font-size: 12px; letter-spacing: 0.14em; color: #E8A33D; margin-bottom: 6px; text-transform: uppercase; }
+  .route-title { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+
+  .mode-toggle-row { display: flex; gap: 10px; margin-bottom: 16px; }
+  .route-tab {
+    border-radius: 8px; padding: 10px 16px; font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 600; font-size: 13px; cursor: pointer; transition: all 150ms ease;
+  }
+
+  .hint { margin-bottom: 10px; font-size: 12px; color: #7C8691; }
+
+  .stops-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+  .arrow { color: #3E4650; font-size: 16px; }
+  .stop-picker {
+    background: #1B2128; border: 1px solid #E8A33D; color: #F3E3C6; border-radius: 8px;
+    padding: 9px 12px; font-family: 'IBM Plex Sans', sans-serif; font-weight: 600; font-size: 13px; cursor: pointer;
+  }
+  .stop-picker option { background: #1B2128; }
+  .stop-with-remove { display: flex; align-items: center; gap: 4px; }
+  .remove-stop-btn {
+    background: transparent; border: 1px solid #22282F; color: #7C8691; border-radius: 6px;
+    width: 26px; height: 26px; cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  .add-stop-btn {
+    background: transparent; border: 1px dashed #3E4650; color: #9CA6B0; border-radius: 8px;
+    padding: 9px 14px; font-family: 'IBM Plex Sans', sans-serif; font-weight: 600; font-size: 13px; cursor: pointer;
+  }
+
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .summary-card { padding: 14px 16px; }
+  .summary-label { font-size: 11px; color: #7C8691; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .summary-value { font-size: 22px; font-weight: 700; color: #E6E9ED; }
+  .summary-sub { font-size: 12px; color: #7C8691; margin-top: 2px; }
+
+  .grid-outer { overflow-x: auto; border: 1px solid #22282F; border-radius: 10px; background: #0E1216; }
+  .grid-scroll { min-width: 780px; padding: 18px; }
+  .fare-grid { display: grid; grid-template-columns: 100px repeat(11, 1fr); gap: 4px; }
+  .grid-corner-label { font-size: 10px; color: #5B6570; display: flex; align-items: flex-end; padding-bottom: 6px; }
+  .grid-col-header { text-align: center; padding-bottom: 6px; }
+  .grid-row-header { display: flex; flex-direction: column; justify-content: center; padding-right: 8px; }
+  .fare-cell {
+    position: relative; border-radius: 6px; padding: 8px 2px; min-height: 44px;
+    transition: transform 120ms ease, box-shadow 120ms ease; cursor: pointer;
+  }
+  .fare-cell:hover { transform: scale(1.08); z-index: 2; box-shadow: 0 0 0 2px rgba(255,255,255,0.6); }
+  .fare-cell:focus-visible { outline: 2px solid #E8A33D; outline-offset: 2px; }
+  .fare-cell-dot { position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; }
+
+  .legend { display: flex; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+  .legend-text { font-size: 12px; color: #7C8691; }
+  .legend-bar { width: 140px; height: 10px; border-radius: 5px; background: linear-gradient(90deg, #4ADE80, #E8A33D, #F87171); }
+  .legend-item { margin-left: 14px; font-size: 12px; color: #7C8691; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .legend-swatch { width: 12px; height: 12px; border: 2px solid #E8A33D; border-radius: 3px; display: inline-block; }
+  .legend-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+
+  .freshness-bar {
+    margin-top: 18px; display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 10px 14px;
+  }
+  .freshness-label { font-size: 12px; color: #7C8691; display: flex; align-items: center; gap: 8px; }
+
+  .btn-ghost {
+    background: transparent; border: 1px solid #3E4650; color: #C7CED6; border-radius: 6px;
+    padding: 6px 12px; font-family: 'IBM Plex Sans', sans-serif; font-weight: 600; font-size: 12px; cursor: pointer;
+  }
+  .btn-ghost:disabled { cursor: default; opacity: 0.6; }
+
+  .options-section { margin-top: 22px; display: flex; flex-direction: column; gap: 8px; }
+  .options-heading { font-size: 12px; color: #7C8691; text-transform: uppercase; letter-spacing: 0.06em; }
+  .options-prompt {
+    background: #14181D; border: 1px dashed #2E353D; border-radius: 8px; padding: 12px 14px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  .options-prompt-text { font-size: 12px; color: #7C8691; max-width: 480px; }
+  .options-prompt .btn-ghost { white-space: nowrap; }
+  .option-row {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    border-radius: 8px; padding: 10px 14px; cursor: pointer; text-align: left; width: 100%;
+  }
+  .cheapest-badge {
+    margin-left: 8px; font-size: 10px; color: #4ADE80; border: 1px solid #2E6B45; border-radius: 4px; padding: 1px 5px;
+  }
+
+  .itinerary-panel { margin-top: 14px; overflow: hidden; }
+  .itinerary-header {
+    padding: 14px 18px; border-bottom: 1px solid #22282F; display: flex;
+    justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
+  }
+  .itinerary-sub { font-size: 12px; color: #7C8691; margin-top: 2px; }
+  .itinerary-total { font-size: 20px; font-weight: 700; color: #E8A33D; }
+  .itinerary-legs { padding: 6px 0; }
+  .leg-row {
+    display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 14px;
+    padding: 12px 18px; animation: fadeIn 220ms ease both;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: translateY(0);} }
+
+  .raw-data-section { margin-top: 22px; }
+  .raw-data-panel { margin-top: 10px; padding: 14px 16px; }
+  .raw-data-hint { font-size: 12px; color: #7C8691; margin-bottom: 10px; line-height: 1.5; }
+  .raw-data-json {
+    margin: 0; font-size: 11.5px; line-height: 1.5; color: #C7CED6; background: #0E1216;
+    border: 1px solid #22282F; border-radius: 8px; padding: 12px 14px; max-height: 480px;
+    overflow: auto; white-space: pre;
+  }
+
+  .footnote { margin-top: 20px; font-size: 12px; color: #4B5560; line-height: 1.6; }
+
+  .loading-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .loading-inner { max-width: 420px; width: 100%; text-align: center; }
+  .loading-eyebrow { font-size: 12px; letter-spacing: 0.14em; color: #E8A33D; text-transform: uppercase; margin-bottom: 14px; }
+  .loading-route { font-size: 15px; color: #C7CED6; margin-bottom: 18px; }
+  .loading-track { background: #14181D; border: 1px solid #22282F; border-radius: 8px; height: 8px; overflow: hidden; }
+  .loading-fill { height: 100%; background: #E8A33D; transition: width 150ms ease; }
+  .loading-caption { font-size: 12px; color: #7C8691; margin-top: 10px; }
+  @keyframes pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+  .pulse-dot { animation: pulse 1s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    .leg-row, .pulse-dot, .fare-cell { animation: none !important; transition: none !important; }
+  }
+
+  ::-webkit-scrollbar { height: 10px; }
+  ::-webkit-scrollbar-track { background: #14181D; }
+  ::-webkit-scrollbar-thumb { background: #2A3138; border-radius: 6px; }
+</style>
+<div id="root"></div>
+<script>
+// ============================================================================
+// mockFetcher.js (ported, unchanged logic)
+// ============================================================================
+const USE_LIVE_API = false; // always mock in the browser
+
+let callsMade = 0;
+function getCallsMade() { return callsMade; }
+function resetCallCounter() { callsMade = 0; }
+
+const CITY_BASE = {
+  nrt: 480, tpe: 550, sin: 760, hkg: 620, icn: 510,
+  bkk: 700, mnl: 640, kul: 780, sgn: 690,
+};
+const ORIGIN_FACTOR = {
+  rdu: 1.0, jfk: 0.92, ord: 0.95, atl: 0.97, dfw: 0.93,
+  lax: 0.78, sfo: 0.75, sea: 0.8,
+};
+const AIRLINES = [
+  "ANA", "EVA Air", "Singapore Airlines", "United", "Delta",
+  "Korean Air", "Cathay Pacific", "China Airlines", "JAL",
+];
+
+function rand(min, max) { return min + Math.random() * (max - min); }
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function simulatedNetworkDelay() {
+  return new Promise((res) => setTimeout(res, rand(150, 500)));
+}
+
+async function fetchFare({ origin, destination, stopsOrder, dOff, rOff }) {
+  if (USE_LIVE_API) {
+    throw new Error("USE_LIVE_API=true but mockFetcher.fetchFare() was called.");
+  }
+  await simulatedNetworkDelay();
+  callsMade += 1;
+
+  const originFactor = ORIGIN_FACTOR[origin] ?? 1.0;
+  const destFactor = ORIGIN_FACTOR[destination] ?? 1.0;
+
+  const legs = [];
+  let prevBase = CITY_BASE[stopsOrder[0]] * originFactor;
+
+  for (let i = 0; i < stopsOrder.length; i++) {
+    const cityBase = CITY_BASE[stopsOrder[i]];
+    const legPrice = Math.round(
+      (i === 0 ? cityBase * originFactor : (prevBase + cityBase) * 0.22) * rand(0.85, 1.2)
+    );
+    legs.push({
+      from: i === 0 ? origin : stopsOrder[i - 1],
+      to: stopsOrder[i],
+      price: legPrice,
+      airline: pick(AIRLINES),
+    });
+    prevBase = cityBase;
+  }
+
+  const lastBase = CITY_BASE[stopsOrder[stopsOrder.length - 1]];
+  const finalLegPrice = Math.round(lastBase * destFactor * 1.05 * rand(0.85, 1.2));
+  legs.push({
+    from: stopsOrder[stopsOrder.length - 1],
+    to: destination,
+    price: finalLegPrice,
+    airline: pick(AIRLINES),
+  });
+
+  const peakPull = (5 - Math.abs(dOff)) * 26 + (5 - Math.abs(rOff)) * 26;
+  const tripLength = 17 + (rOff - dOff);
+  const lengthPenalty = Math.abs(tripLength - 17) * 10;
+  const noise = rand(-80, 80);
+
+  const legTotal = legs.reduce((sum, l) => sum + l.price, 0);
+  const total = Math.max(150, Math.round(legTotal + peakPull + lengthPenalty * 0.4 + noise));
+
+  return {
+    total,
+    legs,
+    raw_response: {
+      mock: true,
+      query: { origin, destination, stopsOrder, dOff, rOff },
+      fetched_at: new Date().toISOString(),
+    },
+  };
+}
+
+// ============================================================================
+// calculations.js (ported, unchanged logic)
+// ============================================================================
+const OFFSETS = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
+
+const CITIES = {
+  nrt: { code: "NRT", city: "Tokyo" },
+  tpe: { code: "TPE", city: "Taipei" },
+  sin: { code: "SIN", city: "Singapore" },
+  hkg: { code: "HKG", city: "Hong Kong" },
+  icn: { code: "ICN", city: "Seoul" },
+  bkk: { code: "BKK", city: "Bangkok" },
+  mnl: { code: "MNL", city: "Manila" },
+  kul: { code: "KUL", city: "Kuala Lumpur" },
+  sgn: { code: "SGN", city: "Ho Chi Minh City" },
+};
+const ORIGINS = {
+  rdu: { code: "RDU", city: "Raleigh-Durham" },
+  jfk: { code: "JFK", city: "New York" },
+  ord: { code: "ORD", city: "Chicago" },
+  atl: { code: "ATL", city: "Atlanta" },
+  dfw: { code: "DFW", city: "Dallas" },
+  lax: { code: "LAX", city: "Los Angeles" },
+  sfo: { code: "SFO", city: "San Francisco" },
+  sea: { code: "SEA", city: "Seattle" },
+};
+
+const DEPART_CENTER = new Date(2026, 11, 17);
+const RETURN_CENTER = new Date(2027, 0, 3);
+
+function addDays(date, n) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + n);
+  return d;
+}
+
+function distributeNights(total, n) {
+  const base = Math.floor(total / n);
+  const remainder = total - base * n;
+  return Array.from({ length: n }, (_, i) => base + (i < remainder ? 1 : 0));
+}
+
+function permute(arr) {
+  if (arr.length <= 1) return [arr];
+  const result = [];
+  arr.forEach((item, i) => {
+    const rest = [...arr.slice(0, i), ...arr.slice(i + 1)];
+    permute(rest).forEach((p) => result.push([item, ...p]));
+  });
+  return result;
+}
+
+async function computePriceForOrder(stopsOrder, origin, destination, dOff, rOff) {
+  const result = await fetchFare({ origin, destination, stopsOrder, dOff, rOff });
+  return {
+    order: stopsOrder,
+    total: result.total,
+    legs: result.legs,
+    legBase: result.legs.map((l) => l.price),
+    baseTotal: result.legs.reduce((s, l) => s + l.price, 0),
+  };
+}
+
+async function buildMatrix(stops, origin, destination, onProgress) {
+  const grid = {};
+  const total = OFFSETS.length * OFFSETS.length;
+  let done = 0;
+  for (const dOff of OFFSETS) {
+    for (const rOff of OFFSETS) {
+      const priced = await computePriceForOrder(stops, origin, destination, dOff, rOff);
+      grid[`${dOff}_${rOff}`] = {
+        total: priced.total,
+        legBase: priced.legBase,
+        baseTotal: priced.baseTotal,
+        legs: priced.legs,
+        order: stops,
+      };
+      done += 1;
+      if (onProgress) onProgress(done, total);
+    }
+  }
+  return grid;
+}
+
+async function generateOptions(stops, origin, destination, dOff, rOff) {
+  if (stops.length > 1) {
+    const orders = permute(stops);
+    const priced = [];
+    for (const order of orders) {
+      priced.push(await computePriceForOrder(order, origin, destination, dOff, rOff));
+    }
+    priced.sort((a, b) => a.total - b.total);
+    return priced.map((p, i) => ({
+      ...p,
+      label: p.order.map((s) => CITIES[s].city).join(" → "),
+      isCheapest: i === 0,
+    }));
+  }
+
+  const base = await computePriceForOrder(stops, origin, destination, dOff, rOff);
+  const variants = [
+    { label: "Best value", mult: 1.0 },
+    { label: "Fewer connections", mult: 1.09 },
+    { label: "Budget carrier mix", mult: 0.93 },
+  ];
+  const priced = variants.map((v) => ({
+    order: stops,
+    total: Math.round(base.total * v.mult),
+    legBase: base.legBase.map((b) => b * v.mult),
+    baseTotal: base.baseTotal * v.mult,
+    legs: base.legs.map((l) => ({ ...l, price: Math.round(l.price * v.mult) })),
+    label: v.label,
+  }));
+  priced.sort((a, b) => a.total - b.total);
+  return priced.map((p, i) => ({ ...p, isCheapest: i === 0 }));
+}
+
+function buildItineraryForOrder(dOff, rOff, stopsOrder, origin, destination, legs) {
+  const totalNights = 17 + (rOff - dOff);
+  const nightsPerStop = distributeNights(totalNights, stopsOrder.length);
+  const originInfo = ORIGINS[origin];
+  const destInfo = ORIGINS[destination];
+
+  const itineraryLegs = [];
+  let cursor = addDays(DEPART_CENTER, dOff);
+  let fromCode = originInfo.code;
+  let fromCity = originInfo.city;
+
+  stopsOrder.forEach((s, i) => {
+    const arrive = i === 0 ? addDays(cursor, 1) : cursor;
+    itineraryLegs.push({
+      from: fromCode,
+      to: CITIES[s].code,
+      fromCity,
+      toCity: CITIES[s].city,
+      depart: cursor,
+      arrive,
+      airline: legs[i].airline,
+      price: legs[i].price,
+    });
+    cursor = addDays(arrive, nightsPerStop[i]);
+    fromCode = CITIES[s].code;
+    fromCity = CITIES[s].city;
+  });
+
+  const arriveFinal = addDays(cursor, 1);
+  itineraryLegs.push({
+    from: fromCode,
+    to: destInfo.code,
+    fromCity,
+    toCity: destInfo.city,
+    depart: cursor,
+    arrive: arriveFinal,
+    airline: legs[stopsOrder.length].airline,
+    price: legs[stopsOrder.length].price,
+  });
+
+  return { legs: itineraryLegs, nightsPerStop, totalNights };
+}
+
+// ============================================================================
+// Presentation helpers (ported from flight-fare-grid.jsx)
+// ============================================================================
+function seededNoise(x, y, seed) {
+  const v = Math.sin(x * 12.9898 + y * 78.233 + seed * 37.719) * 43758.5453;
+  return v - Math.floor(v);
+}
+
+const DEFAULT_ORIGIN = "rdu";
+const DEFAULT_MULTI_STOPS = ["nrt", "tpe", "sin"];
+const DEFAULT_SINGLE_STOP = "nrt";
+const MAX_MULTI_STOPS = 4;
+const MIN_MULTI_STOPS = 2;
+
+function formatDate(date) {
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+function formatDay(date) {
+  return date.toLocaleDateString("en-US", { weekday: "short" });
+}
+function factorial(n) {
+  let f = 1;
+  for (let i = 2; i <= n; i++) f *= i;
+  return f;
+}
+function colorForPrice(price, min, max) {
+  const t = max === min ? 0 : (price - min) / (max - min);
+  const stops = [
+    { t: 0, c: [74, 222, 128] },
+    { t: 0.5, c: [232, 163, 61] },
+    { t: 1, c: [248, 113, 113] },
+  ];
+  let a = stops[0], b = stops[1];
+  if (t > 0.5) { a = stops[1]; b = stops[2]; }
+  const localT = (t - a.t) / (b.t - a.t || 1);
+  const c = a.c.map((v, i) => Math.round(v + (b.c[i] - v) * localT));
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
+function simulatedHoursAgo(dOff, rOff, stopsKey) {
+  const seed = stopsKey.length * 31 + (dOff + 6) * 13 + (rOff + 6) * 7;
+  return 1 + Math.floor(seededNoise(dOff + 6, rOff + 6, seed + 900) * 30);
+}
+function freshnessColor(hoursAgo) {
+  if (hoursAgo <= 6) return "#4ADE80";
+  if (hoursAgo <= 24) return "#E8A33D";
+  return "#F87171";
+}
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// ============================================================================
+// Vanilla-JS app: state + render (no JSX/Babel/eval needed — CSP-safe)
+// ============================================================================
+let state = {
+  origin: DEFAULT_ORIGIN,
+  destination: DEFAULT_ORIGIN,
+  mode: "multicity",
+  singleStop: DEFAULT_SINGLE_STOP,
+  multiStops: [...DEFAULT_MULTI_STOPS],
+  selected: { dOff: 0, rOff: 0 },
+  selectedOptionIndex: 0,
+  matrix: {},
+  matrixProgress: { done: 0, total: OFFSETS.length * OFFSETS.length },
+  refreshedAt: {},
+  refreshingKey: null,
+  optionsCache: {},
+  optionsLoadingKey: null,
+  showRawData: false,
+};
+let requestCounter = 0;
+
+function currentStops() {
+  return state.mode === "roundtrip" ? [state.singleStop] : state.multiStops;
+}
+function routeKey(stopsArr) {
+  return state.origin + "|" + state.destination + "|" + state.mode + "|" + stopsArr.join(",");
+}
+function cellKeyOf(dOff, rOff) {
+  return `${dOff}_${rOff}`;
+}
+function freshnessLabel(dOff, rOff, stopsKey) {
+  const key = cellKeyOf(dOff, rOff);
+  if (state.refreshedAt[key]) {
+    const mins = Math.max(0, Math.floor((Date.now() - state.refreshedAt[key]) / 60000));
+    return mins < 1 ? "Updated just now" : `Updated ${mins}m ago`;
+  }
+  return `Updated ${simulatedHoursAgo(dOff, rOff, stopsKey)}h ago`;
+}
+function freshnessHours(dOff, rOff, stopsKey) {
+  const key = cellKeyOf(dOff, rOff);
+  if (state.refreshedAt[key]) return 0;
+  return simulatedHoursAgo(dOff, rOff, stopsKey);
+}
+function matrixMinMax(matrix) {
+  let mn = Infinity, mx = -Infinity, ck = null;
+  Object.entries(matrix).forEach(([k, v]) => {
+    if (v.total < mn) { mn = v.total; ck = k; }
+    if (v.total > mx) mx = v.total;
+  });
+  return { min: mn, max: mx, cheapestKey: ck };
+}
+
+// ---- actions ----
+function resetSelectionAndReload() {
+  state.selected = { dOff: 0, rOff: 0 };
+  state.selectedOptionIndex = 0;
+  loadMatrixForCurrentRoute();
+}
+function setOrigin(v) { state.origin = v; resetSelectionAndReload(); }
+function setDestination(v) { state.destination = v; resetSelectionAndReload(); }
+function setSingleStop(v) { state.singleStop = v; resetSelectionAndReload(); }
+function setMode(v) { state.mode = v; resetSelectionAndReload(); }
+function updateMultiStop(index, cityKey) {
+  const next = [...state.multiStops];
+  const dupeIndex = next.findIndex((c) => c === cityKey);
+  if (dupeIndex !== -1 && dupeIndex !== index) next[dupeIndex] = next[index];
+  next[index] = cityKey;
+  state.multiStops = next;
+  resetSelectionAndReload();
+}
+function addMultiStop() {
+  if (state.multiStops.length >= MAX_MULTI_STOPS) return;
+  const unused = Object.keys(CITIES).find((k) => !state.multiStops.includes(k));
+  if (!unused) return;
+  state.multiStops = [...state.multiStops, unused];
+  resetSelectionAndReload();
+}
+function removeMultiStop(index) {
+  if (state.multiStops.length <= MIN_MULTI_STOPS) return;
+  state.multiStops = state.multiStops.filter((_, i) => i !== index);
+  resetSelectionAndReload();
+}
+function selectCell(dOff, rOff) {
+  state.selected = { dOff, rOff };
+  state.selectedOptionIndex = 0;
+  render();
+}
+
+async function loadMatrixForCurrentRoute() {
+  const myRequestId = ++requestCounter;
+  state.matrix = {};
+  state.matrixProgress = { done: 0, total: OFFSETS.length * OFFSETS.length };
+  state.refreshedAt = {};
+  state.optionsCache = {};
+  render();
+
+  const stopsArr = currentStops();
+  const origin = state.origin, destination = state.destination;
+  const grid = await buildMatrix(stopsArr, origin, destination, (done, total) => {
+    if (myRequestId !== requestCounter) return;
+    state.matrixProgress = { done, total };
+    render();
+  });
+  if (myRequestId !== requestCounter) return;
+  state.matrix = grid;
+  render();
+
+  const stopsKey = routeKey(stopsArr);
+  const seeded = await generateOptions(stopsArr, origin, destination, 0, 0);
+  if (myRequestId !== requestCounter) return;
+  state.optionsCache = { [`${stopsKey}__0_0`]: seeded };
+  render();
+}
+
+async function refreshCell(dOff, rOff) {
+  const key = cellKeyOf(dOff, rOff);
+  state.refreshingKey = key;
+  render();
+  const stopsArr = currentStops();
+  const priced = await computePriceForOrder(stopsArr, state.origin, state.destination, dOff, rOff);
+  state.matrix = {
+    ...state.matrix,
+    [key]: { total: priced.total, legBase: priced.legBase, baseTotal: priced.baseTotal, legs: priced.legs, order: stopsArr },
+  };
+  state.refreshedAt = { ...state.refreshedAt, [key]: Date.now() };
+  state.refreshingKey = null;
+  render();
+}
+
+async function requestOptions() {
+  const stopsArr = currentStops();
+  const stopsKey = routeKey(stopsArr);
+  const cellKey = cellKeyOf(state.selected.dOff, state.selected.rOff);
+  const fullCacheKey = `${stopsKey}__${cellKey}`;
+  if (state.optionsCache[fullCacheKey] || state.optionsLoadingKey) return;
+  state.optionsLoadingKey = fullCacheKey;
+  render();
+  const computed = await generateOptions(stopsArr, state.origin, state.destination, state.selected.dOff, state.selected.rOff);
+  state.optionsCache = { ...state.optionsCache, [fullCacheKey]: computed };
+  state.optionsLoadingKey = null;
+  render();
+}
+
+// ---- render: HTML string builders ----
+function renderLoadingScreen(stopsArr) {
+  const pct = Math.round((state.matrixProgress.done / Math.max(state.matrixProgress.total, 1)) * 100);
+  const routeLabel = state.mode === "roundtrip"
+    ? `${ORIGINS[state.origin].city} round trip`
+    : `${ORIGINS[state.origin].city} → ${stopsArr.map((s) => CITIES[s].city).join(" → ")} → ${ORIGINS[state.destination].city}`;
+  return `
+    <div class="loading-screen">
+      <div class="loading-inner">
+        <div class="mono pulse-dot loading-eyebrow">Fetching fares</div>
+        <div class="loading-route">${esc(routeLabel)}</div>
+        <div class="loading-track"><div class="loading-fill" style="width:${pct}%"></div></div>
+        <div class="mono loading-caption">${state.matrixProgress.done} / ${state.matrixProgress.total} date pairs priced (${pct}%)</div>
+      </div>
+    </div>
+  `;
+}
+
+function stopPickerHtml(field, value, options, index) {
+  const accent = options === ORIGINS ? "#5B6570" : "#E8A33D";
+  const dataIndex = index !== undefined ? ` data-index="${index}"` : "";
+  return `
+    <select class="stop-picker" style="border-color:${accent}" data-field="${field}"${dataIndex}>
+      ${Object.entries(options).map(([key, c]) => `<option value="${key}" ${key === value ? "selected" : ""}>${esc(c.city)} (${c.code})</option>`).join("")}
+    </select>
+  `;
+}
+
+function renderApp(stopsArr) {
+  const stopsKey = routeKey(stopsArr);
+  const { min, max, cheapestKey } = matrixMinMax(state.matrix);
+  const [cheapDOff, cheapROff] = cheapestKey.split("_").map(Number);
+  const originalTotal = state.matrix["0_0"].total;
+  const cheapestTotal = state.matrix[cheapestKey].total;
+  const savings = originalTotal - cheapestTotal;
+
+  const cellKey = cellKeyOf(state.selected.dOff, state.selected.rOff);
+  const fullCacheKey = `${stopsKey}__${cellKey}`;
+  const revealedOptions = state.optionsCache[fullCacheKey];
+  const isLoadingOptions = state.optionsLoadingKey === fullCacheKey;
+
+  const matrixEntry = state.matrix[cellKey];
+  const defaultOption = {
+    order: stopsArr,
+    total: matrixEntry.total,
+    legs: matrixEntry.legs,
+    label: stopsArr.map((s) => CITIES[s].city).join(" → "),
+    isCheapest: !revealedOptions,
+  };
+  const displayedOptions = revealedOptions ? revealedOptions.slice(0, 5) : [defaultOption];
+  const activeOption = displayedOptions[state.selectedOptionIndex] || displayedOptions[0];
+  const itinerary = buildItineraryForOrder(
+    state.selected.dOff, state.selected.rOff, activeOption.order, state.origin, state.destination, activeOption.legs
+  );
+
+  function datesForKey(key) {
+    const [d, r] = key.split("_").map(Number);
+    return { dOff: d, rOff: r, departDate: formatDate(addDays(DEPART_CENTER, d)), returnDate: formatDate(addDays(RETURN_CENTER, r)) };
+  }
+  const fullMatrixWithDates = Object.fromEntries(
+    Object.entries(state.matrix).map(([key, entry]) => [key, { ...datesForKey(key), ...entry }])
+  );
+
+  const rawData = {
+    dateLegend: "Keys are '{dOff}_{rOff}' offsets in days from the two center dates below — NOT literal dates.",
+    centerDates: { departCenter: formatDate(DEPART_CENTER), returnCenter: formatDate(RETURN_CENTER) },
+    route: { origin: state.origin, destination: state.destination, mode: state.mode, stops: stopsArr },
+    selectedCell: { ...datesForKey(cellKey), key: cellKey },
+    selectedCellFetchedData: matrixEntry,
+    cheapestCell: { ...datesForKey(cheapestKey), key: cheapestKey, total: cheapestTotal },
+    gridMinMaxTotal: { min, max },
+    optionsCheckedForSelectedCell: revealedOptions ?? null,
+    activeOption,
+    itinerary,
+    fullMatrix: fullMatrixWithDates,
+  };
+
+  const routeEyebrow = state.mode === "roundtrip"
+    ? `${ORIGINS[state.origin].code} round trip · Fare grid`
+    : `${ORIGINS[state.origin].code} multi-city loop · Fare grid`;
+  const routeTitle = `${ORIGINS[state.origin].city} → ${stopsArr.map((s) => CITIES[s].city).join(" → ")} → ${ORIGINS[state.destination].city}`;
+
+  const modeToggle = ["roundtrip", "multicity"].map((id) => {
+    const active = state.mode === id;
+    const label = id === "roundtrip" ? "Round trip" : "Multi-city";
+    return `<button class="route-tab" data-action="set-mode" data-mode="${id}" style="background:${active ? "#1B2128" : "transparent"};border:1px solid ${active ? "#E8A33D" : "#22282F"};color:${active ? "#F3E3C6" : "#9CA6B0"}">${label}</button>`;
+  }).join("");
+
+  const stopsRow = state.mode === "roundtrip"
+    ? stopPickerHtml("singleStop", state.singleStop, CITIES)
+    : stopsArr.map((s, i) => `
+        ${i > 0 ? '<span class="arrow">→</span>' : ""}
+        <div class="stop-with-remove">
+          ${stopPickerHtml("multiStop", s, CITIES, i)}
+          ${stopsArr.length > MIN_MULTI_STOPS ? `<button class="remove-stop-btn" data-action="remove-stop" data-index="${i}" aria-label="Remove ${esc(CITIES[s].city)}">×</button>` : ""}
+        </div>
+      `).join("");
+
+  const addStopBtn = state.mode === "multicity" && stopsArr.length < MAX_MULTI_STOPS
+    ? `<button class="add-stop-btn" data-action="add-stop">+ Add stop</button>` : "";
+
+  const gridColHeaders = OFFSETS.map((rOff) => {
+    const d = addDays(RETURN_CENTER, rOff);
+    return `
+      <div class="grid-col-header">
+        <div class="mono" style="font-size:12px;font-weight:${rOff === 0 ? 700 : 500};color:${rOff === 0 ? "#E8A33D" : "#C7CED6"}">${formatDate(d)}</div>
+        <div style="font-size:10px;color:#5B6570">${formatDay(d)}</div>
+      </div>
+    `;
+  }).join("");
+
+  const gridRows = OFFSETS.map((dOff) => {
+    const d = addDays(DEPART_CENTER, dOff);
+    const cells = OFFSETS.map((rOff) => {
+      const entry = state.matrix[cellKeyOf(dOff, rOff)];
+      const isSelected = state.selected.dOff === dOff && state.selected.rOff === rOff;
+      const isOriginal = dOff === 0 && rOff === 0;
+      const isCheapest = dOff === cheapDOff && rOff === cheapROff;
+      const hoursAgo = freshnessHours(dOff, rOff, stopsKey);
+      const border = isSelected ? "2px solid #FFFFFF" : isOriginal ? "2px solid #E8A33D" : isCheapest ? "2px dashed #0B0E11" : "1px solid rgba(0,0,0,0.15)";
+      const label = `Depart ${formatDate(d)}, return ${formatDate(addDays(RETURN_CENTER, rOff))}: $${entry.total} — ${freshnessLabel(dOff, rOff, stopsKey)}`;
+      return `
+        <button class="fare-cell" data-action="select-cell" data-doff="${dOff}" data-roff="${rOff}"
+          style="background:${colorForPrice(entry.total, min, max)};border:${border}" aria-label="${esc(label)}">
+          <span class="fare-cell-dot" style="background:${freshnessColor(hoursAgo)}"></span>
+          <span class="mono" style="font-size:13px;font-weight:700;color:#0B0E11">${entry.total.toLocaleString()}</span>
+        </button>
+      `;
+    }).join("");
+    return `
+      <div class="grid-row-header">
+        <div class="mono" style="font-size:12px;font-weight:${dOff === 0 ? 700 : 500};color:${dOff === 0 ? "#E8A33D" : "#C7CED6"};text-align:right">${formatDate(d)}</div>
+        <div style="font-size:10px;color:#5B6570;text-align:right">${formatDay(d)}</div>
+      </div>
+      ${cells}
+    `;
+  }).join("");
+
+  const isRefreshingSelected = state.refreshingKey === cellKey;
+
+  const optionsSectionLabel = state.mode === "roundtrip"
+    ? "Other flight options"
+    : `Other city orders (${factorial(stopsArr.length)} possible)`;
+
+  const optionsUnrevealed = !revealedOptions ? `
+    <div class="options-prompt">
+      <span class="options-prompt-text">
+        ${state.mode === "roundtrip"
+          ? "Showing the standard search result. Checking alternates looks up a few more fares for this date pair."
+          : `Showing the order as arranged above. Checking other orders prices ${factorial(stopsArr.length)} route combinations for this date pair — only done once per cell, then cached.`}
+      </span>
+      <button class="btn-ghost" data-action="request-options" ${isLoadingOptions ? "disabled" : ""}>
+        ${isLoadingOptions ? "Checking…" : state.mode === "roundtrip" ? "Check alternates" : "Check other orders"}
+      </button>
+    </div>
+  ` : "";
+
+  const optionsRevealed = revealedOptions ? `
+    ${displayedOptions.map((opt, i) => {
+      const active = i === state.selectedOptionIndex;
+      return `
+        <button class="option-row" data-action="select-option" data-index="${i}" style="background:${active ? "#1B2128" : "#14181D"};border:1px solid ${active ? "#E8A33D" : "#22282F"}">
+          <span style="font-size:13px;font-weight:600;color:${active ? "#F3E3C6" : "#C7CED6"}">
+            ${esc(opt.label)}
+            ${opt.isCheapest ? `<span class="mono cheapest-badge">CHEAPEST</span>` : ""}
+          </span>
+          <span class="mono" style="font-size:14px;font-weight:700;color:#E6E9ED">$${opt.total.toLocaleString()}</span>
+        </button>
+      `;
+    }).join("")}
+    <div class="mono" style="font-size:11px;color:#4B5560">Cached — revisiting this date pair won't re-check orders.</div>
+  ` : "";
+
+  const itineraryLegs = itinerary.legs.map((leg, i) => `
+    <div class="leg-row" style="animation-delay:${i * 40}ms;border-bottom:${i < itinerary.legs.length - 1 ? "1px solid #1C2127" : "none"}">
+      <div class="mono" style="font-size:11px;color:#5B6570;text-align:center">${String(i + 1).padStart(2, "0")}</div>
+      <div>
+        <div style="font-size:14px;font-weight:600">${leg.fromCity} (${leg.from}) → ${leg.toCity} (${leg.to})</div>
+        <div class="mono" style="font-size:12px;color:#7C8691;margin-top:3px">
+          Depart ${formatDate(leg.depart)} (${formatDay(leg.depart)})&nbsp;&nbsp;→&nbsp;&nbsp;Arrive ${formatDate(leg.arrive)} (${formatDay(leg.arrive)})&nbsp;&nbsp;·&nbsp;&nbsp;${esc(leg.airline)}
+        </div>
+      </div>
+      <div class="mono" style="font-size:14px;font-weight:700;color:#C7CED6">$${leg.price.toLocaleString()}</div>
+    </div>
+  `).join("");
+
+  return `
+    <div class="page">
+      <div class="section header">
+        <div class="header-inner">
+          <div class="mono eyebrow">${esc(routeEyebrow)}</div>
+          <h1 class="route-title">${esc(routeTitle)}</h1>
+        </div>
+      </div>
+
+      <div class="section mode-toggle-row">${modeToggle}</div>
+
+      ${state.mode === "multicity" ? `<div class="section hint">Pick which cities to include — the grid finds the cheapest order to visit them in.</div>` : ""}
+
+      <div class="section stops-row">
+        ${stopPickerHtml("origin", state.origin, ORIGINS)}
+        <span class="arrow">→</span>
+        ${stopsRow}
+        ${addStopBtn}
+        <span class="arrow">→</span>
+        ${stopPickerHtml("destination", state.destination, ORIGINS)}
+      </div>
+
+      <div class="section summary-grid">
+        <div class="card summary-card">
+          <div class="summary-label">Your dates (Dec 17 → Jan 3)</div>
+          <div class="mono summary-value">$${originalTotal.toLocaleString()}</div>
+          <div class="summary-sub">all 4 legs combined</div>
+        </div>
+        <div class="card summary-card">
+          <div class="summary-label">Cheapest in this grid</div>
+          <div class="mono summary-value" style="color:#4ADE80">$${cheapestTotal.toLocaleString()}</div>
+          <div class="summary-sub">${formatDate(addDays(DEPART_CENTER, cheapDOff))} → ${formatDate(addDays(RETURN_CENTER, cheapROff))}</div>
+        </div>
+        <div class="card summary-card">
+          <div class="summary-label">Potential savings</div>
+          <div class="mono summary-value" style="color:${savings > 0 ? "#4ADE80" : "#7C8691"}">${savings > 0 ? `$${savings.toLocaleString()}` : "$0"}</div>
+          <div class="summary-sub">${savings > 0 ? "vs. your original dates" : "already the best"}</div>
+        </div>
+      </div>
+
+      <div class="section grid-outer">
+        <div class="grid-scroll">
+          <div class="fare-grid">
+            <div class="mono grid-corner-label">DEPART ↓ / RETURN →</div>
+            ${gridColHeaders}
+            ${gridRows}
+          </div>
+        </div>
+      </div>
+
+      <div class="section legend">
+        <span class="legend-text">Cheaper</span>
+        <div class="legend-bar"></div>
+        <span class="legend-text">Pricier</span>
+        <span class="legend-item"><span class="legend-swatch"></span>your dates</span>
+        <span class="legend-item">
+          <span class="legend-dot" style="background:#4ADE80"></span>fresh
+          <span class="legend-dot" style="background:#E8A33D;margin-left:6px"></span>aging
+          <span class="legend-dot" style="background:#F87171;margin-left:6px"></span>stale
+        </span>
+      </div>
+
+      <div class="section card freshness-bar">
+        <div class="mono freshness-label">
+          <span class="legend-dot" style="background:${freshnessColor(freshnessHours(state.selected.dOff, state.selected.rOff, stopsKey))}"></span>
+          ${esc(freshnessLabel(state.selected.dOff, state.selected.rOff, stopsKey))} for this date pair
+        </div>
+        <button class="btn-ghost" data-action="refresh-cell" ${isRefreshingSelected ? "disabled" : ""}>
+          ${isRefreshingSelected ? "Refreshing…" : "↻ Refresh price"}
+        </button>
+      </div>
+
+      <div class="section options-section">
+        <div class="options-heading">${esc(optionsSectionLabel)}</div>
+        ${optionsUnrevealed}
+        ${optionsRevealed}
+      </div>
+
+      <div class="section card itinerary-panel">
+        <div class="itinerary-header">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:#E6E9ED">${esc(activeOption.label)} — ${itinerary.totalNights} nights total</div>
+            <div class="itinerary-sub">${activeOption.order.map((s, i) => `${esc(CITIES[s].city)} ${itinerary.nightsPerStop[i]}n`).join(" · ")}</div>
+          </div>
+          <div class="mono itinerary-total">$${activeOption.total.toLocaleString()}</div>
+        </div>
+        <div class="itinerary-legs">${itineraryLegs}</div>
+      </div>
+
+      <div class="section raw-data-section">
+        <button class="btn-ghost" data-action="toggle-raw-data">${state.showRawData ? "Hide raw data ▲" : "View raw data ▼"}</button>
+        ${state.showRawData ? `
+          <div class="card raw-data-panel">
+            <div class="raw-data-hint">
+              Exactly what's currently backing this screen — the selected cell's fetched
+              price/legs, the full 11×11 grid, any checked options, and the rendered
+              itinerary. Cross-check these numbers against what's on screen above.
+            </div>
+            <pre class="mono raw-data-json">${esc(JSON.stringify(rawData, null, 2))}</pre>
+          </div>
+        ` : ""}
+      </div>
+
+      <div class="section footnote">
+        Prices come from calculations.js, backed by mockFetcher.js's simulated SerpApi calls
+        (see the technical plan) — swap that Fetcher for a real one and nothing here changes.
+        The grid always prices the stop order as arranged above — one fetch per date pair,
+        matching what a real fare API search would cost. Checking other city orders (or
+        alternates for a round trip) is a separate, explicit action since it means pricing
+        every possible ordering; once checked for a given date pair, the result is cached
+        and won't be re-fetched on revisit. The dot on each cell and the "Updated Xh ago"
+        line simulate a fare cache — prices go stale over time and only refresh when you
+        click "Refresh price," which re-fetches just that one cell.
+      </div>
+    </div>
+  `;
+}
+
+function render() {
+  const root = document.getElementById("root");
+  const stopsArr = currentStops();
+  if (Object.keys(state.matrix).length === 0) {
+    root.innerHTML = renderLoadingScreen(stopsArr);
+    return;
+  }
+  root.innerHTML = renderApp(stopsArr);
+}
+
+// ---- event delegation (attached once; survives re-renders) ----
+function setup() {
+  const root = document.getElementById("root");
+  root.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-action]");
+    if (!el) return;
+    const action = el.dataset.action;
+    if (action === "set-mode") setMode(el.dataset.mode);
+    else if (action === "remove-stop") removeMultiStop(Number(el.dataset.index));
+    else if (action === "add-stop") addMultiStop();
+    else if (action === "select-cell") selectCell(Number(el.dataset.doff), Number(el.dataset.roff));
+    else if (action === "refresh-cell") refreshCell(state.selected.dOff, state.selected.rOff);
+    else if (action === "request-options") requestOptions();
+    else if (action === "select-option") { state.selectedOptionIndex = Number(el.dataset.index); render(); }
+    else if (action === "toggle-raw-data") { state.showRawData = !state.showRawData; render(); }
+  });
+  root.addEventListener("change", (e) => {
+    const el = e.target.closest("[data-field]");
+    if (!el) return;
+    const field = el.dataset.field;
+    if (field === "origin") setOrigin(el.value);
+    else if (field === "destination") setDestination(el.value);
+    else if (field === "singleStop") setSingleStop(el.value);
+    else if (field === "multiStop") updateMultiStop(Number(el.dataset.index), el.value);
+  });
+  loadMatrixForCurrentRoute();
+}
+
+setup();
+
+</script>
